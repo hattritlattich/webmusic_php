@@ -1,0 +1,31 @@
+# Security Headers
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-Frame-Options "SAMEORIGIN"
+    Header set X-XSS-Protection "1; mode=block"
+    Header set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+    Header set Content-Security-Policy "default-src 'self'; script-src 'self' https://cdn.tailwindcss.com https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css; img-src 'self' data:; font-src 'self' https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css;"
+    Header set Referrer-Policy "no-referrer-when-downgrade"
+    Header set Permissions-Policy "geolocation=(), microphone=(), camera=()"
+</IfModule>
+
+RewriteEngine On
+RewriteRule ^$ public/ [L]
+RewriteRule (.*) public/$1 [L]
+
+# Prevent direct access to PHP files
+<FilesMatch "\.php$">
+    Order Allow,Deny
+    Deny from all
+</FilesMatch>
+
+# Allow access to index.php
+<Files "index.php">
+    Order Allow,Deny
+    Allow from all
+</Files>
+
+# Redirect all requests to index.php
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)$ index.php?url=$1 [QSA,L] 

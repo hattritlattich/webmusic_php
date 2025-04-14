@@ -1,0 +1,3 @@
+ALTER TABLE users 
+ADD COLUMN birthdate DATE NULL,
+ADD COLUMN country VARCHAR(100) NULL; 

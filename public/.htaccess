@@ -1,0 +1,7 @@
+RewriteEngine On
+RewriteBase /
+
+# Nếu file/directory không tồn tại, chuyển hướng về index.php
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)$ index.php [QSA,L]

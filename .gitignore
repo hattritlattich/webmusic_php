@@ -1,0 +1,12 @@
+public/uploads/avatars/*
+!public/uploads/avatars/.gitkeep
+!public/uploads/avatars/index.html
+public/uploads/playlists/*
+!public/uploads/playlists/.gitkeep
+!public/uploads/playlists/index.html
+public/uploads/artists/*
+!public/uploads/artists/.gitkeep
+!public/uploads/artists/index.html
+public/uploads/songs/*
+!public/uploads/songs/.gitkeep
+!public/uploads/songs/index.html 

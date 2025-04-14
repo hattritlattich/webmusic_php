@@ -1,0 +1,13 @@
+Options -Indexes
+
+# Cho phép truy cập file media
+<FilesMatch "\.(jpg|jpeg|png|gif|mp3|wav)$">
+    Order Allow,Deny
+    Allow from all
+</FilesMatch>
+
+# Chặn thực thi PHP
+<FilesMatch "\.php$">
+    Order Deny,Allow
+    Deny from all
+</FilesMatch> 
