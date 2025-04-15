@@ -16,7 +16,11 @@ $artistModel = new ArtistModel();
 
 // Xử lý like/unlike bài hát
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'toggle_like') {
-    if (!empty($_SESSION['user_id']) && !empty($_POST['song_id'])) {
+    if (empty($_SESSION['user_id'])) {
+        header("Location: ?page=login");
+        exit;
+    }
+    if (!empty($_POST['song_id'])) {
         try {
             $songModel->toggleLike((int)$_POST['song_id']);
             $_SESSION['success_message'] = 'Đã cập nhật trạng thái yêu thích';
@@ -148,7 +152,7 @@ function safeDisplay($data) {
                         <div class="w-8 h-8 bg-spotify-green flex items-center justify-center rounded-sm mr-3">
                             <i class="fas fa-plus text-black"></i>
                         </div>
-                        <span class="font-semibold cursor-pointer" onclick="openCreatePlaylistModal()">Tạo Danh Sách</span>
+                        <span class="font-semibold cursor-pointer" onclick="<?= empty($_SESSION['user_id']) ? 'window.location.href=\'?page=login\'' : 'openCreatePlaylistModal()' ?>">Tạo Danh Sách</span>
                     </div>
                     <div class="flex items-center">
                         <div class="w-8 h-8 bg-gradient-to-br from-purple-700 to-gray-400 flex items-center justify-center rounded-sm mr-3">
@@ -158,10 +162,12 @@ function safeDisplay($data) {
                     </div>
                 </div>
                 <div class="border-t border-gray-800 pt-4">
+                    <?php if (!empty($_SESSION['user_id'])): ?>
                     <h3 class="text-gray-400 text-sm font-semibold mb-4">DANH SÁCH PHÁT CỦA BẠN</h3>
                     <div id="userPlaylists" class="space-y-2">
                         <!-- Danh sách playlist sẽ được thêm vào đây bằng JavaScript -->
                     </div>
+                    <?php endif; ?>
                 </div>
             </div>
         </div>
@@ -306,9 +312,87 @@ function safeDisplay($data) {
                 <!-- Top Bài Hát Nghe Nhiều -->
                 <?php if($page !== 'playlist'): ?>
                 <section class="mb-8" id="top-songs-section">
-                    <h2 class="text-2xl font-bold mb-4">Top Bài Hát Nghe Nhiều</h2>
+                    <h2 class="text-2xl font-bold mb-4">Top Bài Hát Được Yêu Thích Nhất</h2>
                     <div id="top-songs-container">
-                        <p class="text-gray-400">Chưa có dữ liệu bài hát nghe nhiều. Bắt đầu phát bài hát để xem thống kê.</p>
+                        <?php
+                        $topLikedSongs = $songModel->getTopLikedSongs(5);
+                        if (empty($topLikedSongs)): 
+                        ?>
+                            <p class="text-gray-400">Chưa có bài hát nào được yêu thích.</p>
+                        <?php else: ?>
+                            <table class="w-full text-left">
+                                <thead>
+                                    <tr class="text-gray-400">
+                                        <th class="pb-3">#</th>
+                                        <th class="pb-3">Bài hát</th>
+                                        <th class="pb-3">Nghệ sĩ</th>
+                                        <th class="pb-3">Lượt thích</th>
+                                        <th class="pb-3"></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php foreach ($topLikedSongs as $index => $song): ?>
+                                        <tr class="hover:bg-[#2f2739] group">
+                                            <td class="py-2 px-2 relative">
+                                                <div class="flex items-center">
+                                                    <?php if ($index < 3): ?>
+                                                        <span class="group-hover:hidden <?= $index === 0 ? 'text-yellow-500' : ($index === 1 ? 'text-gray-300' : 'text-yellow-600') ?> font-bold">
+                                                            <?= $index === 0 ? '<i class="fas fa-crown"></i>' : ($index === 1 ? '<i class="fas fa-medal"></i>' : '<i class="fas fa-award"></i>') ?>
+                                                            <?= $index + 1 ?>
+                                                        </span>
+                                                    <?php else: ?>
+                                                        <span class="group-hover:hidden"><?= $index + 1 ?></span>
+                                                    <?php endif; ?>
+                                                    <button type="button" 
+                                                            class="hidden group-hover:block text-white hover:scale-110 transition-transform absolute left-1/2 -translate-x-1/2"
+                                                            onclick="playSongAndUpdatePlays(
+                                                                '<?= htmlspecialchars($song['file_path']) ?>', 
+                                                                '<?= htmlspecialchars($song['title']) ?>', 
+                                                                '<?= htmlspecialchars($song['artist']) ?>', 
+                                                                '<?= htmlspecialchars($song['cover_image']) ?>',
+                                                                <?= $song['id'] ?>
+                                                            )">
+                                                        <i class="fas fa-play text-lg"></i>
+                                                    </button>
+                                                </div>
+                                            </td>
+                                            <td class="py-2">
+                                                <div class="flex items-center cursor-pointer" 
+                                                     onclick="playSongAndUpdatePlays(
+                                                        '<?= htmlspecialchars($song['file_path']) ?>', 
+                                                        '<?= htmlspecialchars($song['title']) ?>', 
+                                                        '<?= htmlspecialchars($song['artist']) ?>', 
+                                                        '<?= htmlspecialchars($song['cover_image']) ?>',
+                                                        <?= $song['id'] ?>
+                                                     )">
+                                                    <div class="relative w-10 h-10 mr-3 flex-shrink-0">
+                                                        <img src="<?= htmlspecialchars($song['cover_image']) ?>" 
+                                                             alt="<?= htmlspecialchars($song['title']) ?>" 
+                                                             class="w-full h-full rounded object-cover">
+                                                    </div>
+                                                    <div class="flex flex-col">
+                                                        <div class="text-white text-sm font-medium">
+                                                            <?= htmlspecialchars($song['title']) ?>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td class="py-2 text-gray-400"><?= htmlspecialchars($song['artist']) ?></td>
+                                            <td class="py-2 text-gray-400"><?= $song['like_count'] ?></td>
+                                            <td class="py-2">
+                                                <form method="POST" action="" style="display: inline;">
+                                                    <input type="hidden" name="action" value="toggle_like">
+                                                    <input type="hidden" name="song_id" value="<?= $song['id'] ?>">
+                                                    <button type="submit" class="like-button <?= $song['is_liked'] ? 'text-red-500' : 'text-gray-400 hover:text-white' ?>">
+                                                        <i class="<?= $song['is_liked'] ? 'fas' : 'far' ?> fa-heart"></i>
+                                                    </button>
+                                                </form>
+                                            </td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        <?php endif; ?>
                     </div>
                 </section>
                 <?php endif; ?>
@@ -360,6 +444,16 @@ function safeDisplay($data) {
                             <div class="flex items-center gap-3 mb-6">
                                 <h2 class="text-2xl font-bold">Danh sách đã thích</h2>
                                 <i class="fas fa-heart text-red-500"></i>
+                                <div class="ml-auto flex gap-2">
+                                    <button onclick="playAllLikedSongs()" class="bg-[#1DB954] hover:bg-[#1ed760] text-white px-4 py-2 rounded-full text-sm font-medium flex items-center gap-2">
+                                        <i class="fas fa-play"></i>
+                                        Phát tất cả
+                                    </button>
+                                    <button onclick="shuffleLikedSongs()" class="bg-[#2f2739] hover:bg-[#393243] text-white px-4 py-2 rounded-full text-sm font-medium flex items-center gap-2">
+                                        <i class="fas fa-random"></i>
+                                        Phát ngẫu nhiên
+                                    </button>
+                                </div>
                             </div>
                             <div class="bg-[#170f23] rounded-lg p-4">
                                 <?php
@@ -434,12 +528,12 @@ function safeDisplay($data) {
                                                                 <i class="<?= $song['is_liked'] ? 'fas' : 'far' ?> fa-heart"></i>
                                                             </button>
                                                         </form>
-                                                        <button onclick="openAddToPlaylistModal({
-                                                            url: '<?= htmlspecialchars($song['file_path']) ?>',
-                                                            title: '<?= htmlspecialchars($song['title']) ?>',
-                                                            artist: '<?= htmlspecialchars($song['artist']) ?>',
-                                                            image: '<?= htmlspecialchars($song['cover_image']) ?>'
-                                                        })" class="text-gray-400 hover:text-white ml-2">
+                                                        <button onclick="<?= empty($_SESSION['user_id']) ? 'window.location.href=\'?page=login\'' : 'openAddToPlaylistModal({
+                                                            url: \'' . htmlspecialchars($song['file_path']) . '\',
+                                                            title: \'' . htmlspecialchars($song['title']) . '\',
+                                                            artist: \'' . htmlspecialchars($song['artist']) . '\',
+                                                            image: \'' . htmlspecialchars($song['cover_image']) . '\'
+                                                        })' ?>" class="text-gray-400 hover:text-white ml-2">
                                                             <i class="fas fa-plus"></i>
                                                         </button>
                                                     </td>
@@ -580,12 +674,12 @@ function safeDisplay($data) {
                                                             <i class="<?= $song['is_liked'] ? 'fas' : 'far' ?> fa-heart"></i>
                                                         </button>
                                                     </form>
-                                                    <button onclick="openAddToPlaylistModal({
-                                                        url: '<?= htmlspecialchars($song['file_path']) ?>',
-                                                        title: '<?= htmlspecialchars($song['title']) ?>',
-                                                        artist: '<?= htmlspecialchars($song['artist']) ?>',
-                                                        image: '<?= htmlspecialchars($song['cover_image']) ?>'
-                                                    })" class="text-gray-400 hover:text-white ml-2">
+                                                    <button onclick="<?= empty($_SESSION['user_id']) ? 'window.location.href=\'?page=login\'' : 'openAddToPlaylistModal({
+                                                        url: \'' . htmlspecialchars($song['file_path']) . '\',
+                                                        title: \'' . htmlspecialchars($song['title']) . '\',
+                                                        artist: \'' . htmlspecialchars($song['artist']) . '\',
+                                                        image: \'' . htmlspecialchars($song['cover_image']) . '\'
+                                                    })' ?>" class="text-gray-400 hover:text-white ml-2">
                                                         <i class="fas fa-plus"></i>
                                                     </button>
                                                 </td>
@@ -938,12 +1032,7 @@ function safeDisplay($data) {
                     <span id="currentTime" class="text-gray-400 w-10 text-right pr-2">0:00</span>
                     <div class="progress-container flex-1 relative h-1 bg-gray-700 rounded-full group">
                     <div id="progress" class="absolute top-0 left-0 h-full bg-gray-400 group-hover:bg-[#1DB954] rounded-full"></div>
-                        <input
-                            type="range"
-                            id="progressBar"
-                            class="absolute top-0 left-0 w-full h-1 opacity-0 cursor-pointer"
-                            min="0" max="100" value="0"
-                        >
+                        <input type="range" id="progressBar" class="absolute top-0 left-0 w-full h-full opacity-0 cursor-pointer" min="0" max="100" value="0">
                     </div>
                     <span id="duration" class="text-gray-400 w-10 text-left pl-2">0:00</span>
                 </div>
@@ -1100,11 +1189,11 @@ function safeDisplay($data) {
 
     // Tùy chỉnh thanh tiến trình
     progressBar.addEventListener('input', (e) => {
-        if (!audio.duration) return;
+        if (!audioPlayer.duration) return;
 
         const value = parseFloat(e.target.value);
-        const seekTime = (value / 100) * audio.duration;
-        audio.currentTime = seekTime;
+        const seekTime = (value / 100) * audioPlayer.duration;
+        audioPlayer.currentTime = seekTime;
         progress.style.width = `${value}%`;
     });
 
@@ -1414,9 +1503,12 @@ function safeDisplay($data) {
 
     // Click vào progress bar để tua
     document.getElementById('progressBar').addEventListener('click', (e) => {
+        if (!audioPlayer.duration) return;
+        
         const progressBar = e.currentTarget;
         const clickPosition = (e.pageX - progressBar.offsetLeft) / progressBar.offsetWidth;
-        audioPlayer.currentTime = clickPosition * audioPlayer.duration;
+        const seekTime = clickPosition * audioPlayer.duration;
+        audioPlayer.currentTime = seekTime;
     });
 
     // Xử lý volume
@@ -1972,8 +2064,8 @@ function safeDisplay($data) {
     let lastVolume = 1; // Lưu trữ mức âm lượng trước khi tắt tiếng
 
     function updateVolumeSlider(volume) {
-        const volumeSlider = document.getElementById('volume-slider');
-        const volumeIcon = document.getElementById('volume-icon');
+        const volumeSlider = document.getElementById('volumeSlider');
+        const volumeIcon = document.getElementById('volumeIcon');
         const percentage = volume * 100;
         
         volumeSlider.value = percentage;
@@ -1991,28 +2083,39 @@ function safeDisplay($data) {
     }
 
     function toggleMute() {
-        if (!currentAudio) return;
+        const audioPlayer = document.getElementById('audioPlayer');
+        if (!audioPlayer) return;
 
-        if (currentAudio.volume > 0) {
-            lastVolume = currentAudio.volume;
-            currentAudio.volume = 0;
+        if (audioPlayer.volume > 0) {
+            lastVolume = audioPlayer.volume;
+            audioPlayer.volume = 0;
         } else {
-            currentAudio.volume = lastVolume;
+            audioPlayer.volume = lastVolume;
         }
-        updateVolumeSlider(currentAudio.volume);
+        updateVolumeSlider(audioPlayer.volume);
     }
 
     // Thêm event listeners cho điều khiển âm lượng
-    document.getElementById('volume-slider')?.addEventListener('input', (e) => {
-        const volume = e.target.value / 100;
-        if (currentAudio) {
-            currentAudio.volume = volume;
-            lastVolume = volume;
+    document.addEventListener('DOMContentLoaded', function() {
+        const volumeSlider = document.getElementById('volumeSlider');
+        const volumeButton = document.querySelector('.fa-volume-up').parentElement;
+        
+        if (volumeSlider) {
+            volumeSlider.addEventListener('input', (e) => {
+                const volume = e.target.value / 100;
+                const audioPlayer = document.getElementById('audioPlayer');
+                if (audioPlayer) {
+                    audioPlayer.volume = volume;
+                    lastVolume = volume;
+                }
+                updateVolumeSlider(volume);
+            });
         }
-        updateVolumeSlider(volume);
-    });
 
-    document.getElementById('volume-button')?.addEventListener('click', toggleMute);
+        if (volumeButton) {
+            volumeButton.addEventListener('click', toggleMute);
+        }
+    });
     </script>
 
     <style>
@@ -2222,6 +2325,11 @@ function safeDisplay($data) {
     let userPlaylists = JSON.parse(localStorage.getItem('userPlaylists') || '[]');
     let currentSongToAdd = null;
 
+    // Hàm kiểm tra bài hát đã tồn tại trong playlist
+    function isSongInPlaylist(playlist, songUrl) {
+        return playlist.songs && playlist.songs.some(song => song.url === songUrl);
+    }
+
     // Hàm mở modal tạo playlist
     function openCreatePlaylistModal() {
         document.getElementById('createPlaylistModal').classList.remove('hidden');
@@ -2236,6 +2344,11 @@ function safeDisplay($data) {
 
     // Hàm mở modal thêm vào playlist
     function openAddToPlaylistModal(songData) {
+        if (!songData || !songData.url) {
+            alert('Không thể thêm bài hát này vào playlist');
+            return;
+        }
+
         currentSongToAdd = songData;
         const playlistList = document.getElementById('playlistList');
         playlistList.innerHTML = '';
@@ -2244,15 +2357,18 @@ function safeDisplay($data) {
             playlistList.innerHTML = '<p class="text-gray-400 text-center">Bạn chưa có danh sách phát nào</p>';
         } else {
             userPlaylists.forEach(playlist => {
+                const isSongExists = isSongInPlaylist(playlist, songData.url);
                 const playlistItem = document.createElement('div');
                 playlistItem.className = 'flex items-center justify-between p-2 hover:bg-[#2f2739] rounded cursor-pointer';
                 playlistItem.innerHTML = `
                     <div class="flex items-center">
                         <i class="fas fa-music text-gray-400 mr-3"></i>
                         <span class="text-white">${playlist.name}</span>
+                        <span class="text-gray-500 text-sm ml-2">(${playlist.songs ? playlist.songs.length : 0} bài hát)</span>
                     </div>
                     <button onclick="addSongToPlaylist('${playlist.id}')" 
-                            class="text-[#1DB954] hover:text-[#1ed760]">
+                            class="text-[#1DB954] hover:text-[#1ed760] ${isSongExists ? 'opacity-50 cursor-not-allowed' : ''}"
+                            ${isSongExists ? 'disabled' : ''}>
                         <i class="fas fa-plus"></i>
                     </button>
                 `;
@@ -2274,14 +2390,26 @@ function safeDisplay($data) {
     function createPlaylist(event) {
         event.preventDefault();
         const form = event.target;
-        const name = form.name.value;
-        const description = form.description.value;
+        const name = form.name.value.trim();
+        const description = form.description.value.trim();
+
+        if (!name) {
+            alert('Vui lòng nhập tên playlist');
+            return false;
+        }
+
+        // Kiểm tra tên playlist đã tồn tại chưa
+        const isNameExists = userPlaylists.some(p => p.name.toLowerCase() === name.toLowerCase());
+        if (isNameExists) {
+            alert('Tên playlist đã tồn tại');
+            return false;
+        }
 
         const newPlaylist = {
             id: Date.now().toString(),
             name: name,
             description: description,
-            songs: [], // Đảm bảo mảng này rỗng khi tạo mới
+            songs: [],
             created_at: new Date().toISOString()
         };
 
@@ -2302,40 +2430,80 @@ function safeDisplay($data) {
 
     // Hàm thêm bài hát vào playlist
     function addSongToPlaylist(playlistId) {
-        if (!currentSongToAdd) return;
+        if (!currentSongToAdd || !currentSongToAdd.url) {
+            alert('Không thể thêm bài hát này vào playlist');
+            return;
+        }
 
         const playlist = userPlaylists.find(p => p.id === playlistId);
-        if (playlist) {
-            // Kiểm tra xem bài hát đã tồn tại trong playlist chưa
-            const songExists = playlist.songs.some(s => s.url === currentSongToAdd.url);
-            if (!songExists) {
-                playlist.songs.push(currentSongToAdd);
-                localStorage.setItem('userPlaylists', JSON.stringify(userPlaylists));
-                alert('Đã thêm bài hát vào danh sách phát');
-            } else {
-                alert('Bài hát đã có trong danh sách phát này');
-            }
+        if (!playlist) {
+            alert('Không tìm thấy playlist');
+            return;
         }
+
+        // Kiểm tra xem bài hát đã tồn tại trong playlist chưa
+        if (isSongInPlaylist(playlist, currentSongToAdd.url)) {
+            alert('Bài hát đã có trong danh sách phát này');
+            return;
+        }
+
+        // Thêm bài hát vào playlist
+        if (!playlist.songs) {
+            playlist.songs = [];
+        }
+        playlist.songs.push(currentSongToAdd);
+        localStorage.setItem('userPlaylists', JSON.stringify(userPlaylists));
+
+        // Hiển thị thông báo thành công
+        const toast = document.createElement('div');
+        toast.className = 'fixed bottom-4 right-4 bg-[#1DB954] text-white px-4 py-2 rounded shadow-lg';
+        toast.textContent = 'Đã thêm bài hát vào danh sách phát';
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 3000);
 
         closeAddToPlaylistModal();
     }
 
-    // Hàm xóa playlist
-    function deletePlaylist(playlistId) {
-        if (confirm('Bạn có chắc muốn xóa danh sách phát này?')) {
-            userPlaylists = userPlaylists.filter(p => p.id !== playlistId);
+    // Hàm xóa bài hát khỏi playlist
+    function removeFromPlaylist(playlistId, songUrl) {
+        if (!confirm('Bạn có chắc muốn xóa bài hát này khỏi playlist?')) {
+            return;
+        }
+
+        const playlist = userPlaylists.find(p => p.id === playlistId);
+        if (playlist && playlist.songs) {
+            playlist.songs = playlist.songs.filter(song => song.url !== songUrl);
             localStorage.setItem('userPlaylists', JSON.stringify(userPlaylists));
             
-            // Chuyển về trang chủ
-            window.location.href = '?page=home';
+            // Cập nhật giao diện
+            const songListContainer = document.getElementById('user-playlist-songs');
+            if (songListContainer) {
+                const songElement = songListContainer.querySelector(`[data-song-url="${songUrl}"]`);
+                if (songElement) {
+                    songElement.remove();
+                }
+            }
         }
     }
-    </script>
 
-    <script>
+    // Hàm xóa playlist
+    function deletePlaylist(playlistId) {
+        if (!confirm('Bạn có chắc muốn xóa danh sách phát này?')) {
+            return;
+        }
+
+        userPlaylists = userPlaylists.filter(p => p.id !== playlistId);
+        localStorage.setItem('userPlaylists', JSON.stringify(userPlaylists));
+        
+        // Chuyển về trang chủ
+        window.location.href = '?page=home';
+    }
+
     // Hiển thị danh sách playlist của người dùng
     function displayUserPlaylists() {
         const container = document.getElementById('userPlaylists');
+        if (!container) return;
+
         container.innerHTML = '';
 
         if (userPlaylists.length === 0) {
@@ -2838,80 +3006,100 @@ function safeDisplay($data) {
     <script>
     // Khởi tạo audio player toàn cục
     const audioPlayer = {
-        audio: new Audio(),
-        currentSong: null,
+        audio: document.getElementById('audioPlayer'),
         isPlaying: false,
+        currentSong: null,
+        wasPlaying: false,
+
         init() {
-            // Thiết lập các event listeners
+            // Xử lý timeupdate để cập nhật thanh progress
+            this.audio.addEventListener('timeupdate', () => {
+                if (!this.audio.duration) return;
+                
+                const progress = (this.audio.currentTime / this.audio.duration) * 100;
+                document.getElementById('progress').style.width = `${progress}%`;
+                document.getElementById('progressBar').value = progress;
+                
+                // Cập nhật thời gian
+                document.getElementById('currentTime').textContent = this.formatTime(this.audio.currentTime);
+                document.getElementById('duration').textContent = this.formatTime(this.audio.duration);
+            });
+
+            // Xử lý sự kiện khi bài hát kết thúc
             this.audio.addEventListener('ended', () => {
                 this.isPlaying = false;
                 this.updateUI();
-                // Tự động phát bài tiếp theo nếu có
-                nextSong();
             });
 
-            this.audio.addEventListener('timeupdate', () => {
-                this.updateProgress();
-            });
-
+            // Xử lý sự kiện khi bắt đầu phát
             this.audio.addEventListener('play', () => {
                 this.isPlaying = true;
                 this.updateUI();
             });
 
+            // Xử lý sự kiện khi tạm dừng
             this.audio.addEventListener('pause', () => {
-                this.isPlaying = false; 
+                this.isPlaying = false;
                 this.updateUI();
             });
-
-            // Xử lý volume
-            const volumeSlider = document.getElementById('volumeSlider');
-            if (volumeSlider) {
-                volumeSlider.addEventListener('input', (e) => {
-                    this.audio.volume = e.target.value / 100;
-                    this.updateVolumeIcon(e.target.value);
-                });
-            }
 
             // Xử lý progress bar
             const progressBar = document.getElementById('progressBar');
             if (progressBar) {
+                // Xử lý khi kéo thanh progress
                 progressBar.addEventListener('input', (e) => {
-                    const time = (e.target.value / 100) * this.audio.duration;
-                    this.audio.currentTime = time;
+                    this.handleSeek(e.target.value);
+                });
+
+                // Xử lý khi kết thúc kéo thanh progress
+                progressBar.addEventListener('change', (e) => {
+                    this.handleSeek(e.target.value);
+                });
+            }
+
+            // Xử lý click vào progress container
+            const progressContainer = document.querySelector('.progress-container');
+            if (progressContainer) {
+                progressContainer.addEventListener('click', (e) => {
+                    const rect = progressContainer.getBoundingClientRect();
+                    const clickPosition = (e.clientX - rect.left) / rect.width;
+                    const seekValue = clickPosition * 100;
+                    this.handleSeek(seekValue);
                 });
             }
         },
 
-        async playSong(url, title, artist, image, songId) {
-            // Nếu đang phát bài hát khác, dừng lại
-            if (this.currentSong && this.currentSong.url !== url) {
-                this.audio.pause();
-                this.isPlaying = false;
-            }
-
-            // Lưu thông tin bài hát hiện tại
-            this.currentSong = { url, title, artist, image, id: songId };
-
-            // Cập nhật UI trước khi phát
-            this.updateUI();
-
-            // Nếu là URL mới, cập nhật source
-            if (this.audio.src !== url) {
-                this.audio.src = url;
-            }
-
-            try {
-                await this.audio.play();
-                this.isPlaying = true;
-                this.updateUI();
-                if (songId) this.updatePlayCount(songId);
-            } catch (error) {
-                console.error('Lỗi phát nhạc:', error);
-                alert('Không thể phát bài hát này');
+        handleSeek(value) {
+            if (!this.audio.duration) return;
+            
+            // Lưu trạng thái phát hiện tại
+            this.wasPlaying = !this.audio.paused;
+            
+            // Tạm dừng audio
+            this.audio.pause();
+            
+            // Đặt thời gian mới
+            const seekTime = (value / 100) * this.audio.duration;
+            this.audio.currentTime = seekTime;
+            
+            // Tiếp tục phát nếu đang phát
+            if (this.wasPlaying) {
+                this.audio.play().catch(error => {
+                    console.error('Lỗi phát nhạc:', error);
+                });
             }
         },
-//////////////////////
+
+        playSong(url, title, artist, image, songId) {
+            this.currentSong = { url, title, artist, image, songId };
+            this.audio.src = url;
+            this.audio.play().catch(error => {
+                console.error('Lỗi phát nhạc:', error);
+            });
+            this.isPlaying = true;
+            this.updateUI();
+        },
+
         togglePlay() {
             if (!this.currentSong) return;
 
@@ -2922,10 +3110,11 @@ function safeDisplay($data) {
                     console.error('Lỗi phát nhạc:', error);
                 });
             }
+            this.isPlaying = !this.isPlaying;
+            this.updateUI();
         },
 
         updateUI() {
-            // Cập nhật player layer
             const playerLayer = document.getElementById('audioPlayerLayer');
             if (this.currentSong) {
                 playerLayer.classList.remove('hidden');
@@ -2934,38 +3123,10 @@ function safeDisplay($data) {
                 document.getElementById('currentSongImage').src = this.currentSong.image || '/uploads/artists/placeholder.jpg';
             }
 
-            // Cập nhật icon play/pause
             const playPauseIcon = document.getElementById('playPauseIcon');
             if (playPauseIcon) {
                 playPauseIcon.className = this.isPlaying ? 'fas fa-pause' : 'fas fa-play';
             }
-        },
-
-        updateProgress() {
-            if (!this.audio.duration) return;
-
-            const progress = (this.audio.currentTime / this.audio.duration) * 100;
-            const progressBar = document.getElementById('progress');
-            const progressInput = document.getElementById('progressBar');
-            const currentTime = document.getElementById('currentTime');
-            const duration = document.getElementById('duration');
-
-            if (progressBar) progressBar.style.width = `${progress}%`;
-            if (progressInput) progressInput.value = progress;
-            if (currentTime) currentTime.textContent = this.formatTime(this.audio.currentTime);
-            if (duration) duration.textContent = this.formatTime(this.audio.duration);
-        },
-
-        updateVolumeIcon(value) {
-            const icon = document.getElementById('volumeIcon');
-            if (!icon) return;
-
-            icon.className = 'fas ' + (
-                value == 0 ? 'fa-volume-mute' :
-                value < 30 ? 'fa-volume-off' :
-                value < 70 ? 'fa-volume-down' :
-                'fa-volume-up'
-            );
         },
 
         formatTime(seconds) {
@@ -2973,23 +3134,11 @@ function safeDisplay($data) {
             const minutes = Math.floor(seconds / 60);
             const remainingSeconds = Math.floor(seconds % 60);
             return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
-        },
-
-        updatePlayCount(songId) {
-            fetch('api/update-play-count.php', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ songId: songId })
-            }).catch(error => console.error('Lỗi cập nhật lượt nghe:', error));
         }
     };
 
     // Khởi tạo audio player khi trang load
-    document.addEventListener('DOMContentLoaded', () => {
-        audioPlayer.init();
-    });
+    audioPlayer.init();
 
     // Hàm phát nhạc và cập nhật lượt nghe
     function playSongAndUpdatePlays(url, title, artist, image, songId) {
@@ -3024,7 +3173,108 @@ function safeDisplay($data) {
 }
 
     </script>
+
+    <script>
+    // Biến lưu danh sách bài hát đã thích
+    let likedSongsList = <?= json_encode($likedSongs) ?>;
+
+    // Hàm phát tất cả bài hát đã thích
+    function playAllLikedSongs() {
+        if (likedSongsList.length === 0) return;
+        
+        // Phát bài đầu tiên
+        const firstSong = likedSongsList[0];
+        playSongAndUpdatePlays(
+            firstSong.file_path,
+            firstSong.title,
+            firstSong.artist,
+            firstSong.cover_image,
+            firstSong.id,
+            firstSong.lyrics_file
+        );
+        
+        // Lưu danh sách phát vào localStorage
+        localStorage.setItem('currentPlaylist', JSON.stringify(likedSongsList));
+        localStorage.setItem('currentPlaylistIndex', '0');
+    }
+
+    // Hàm phát ngẫu nhiên bài hát đã thích
+    function shuffleLikedSongs() {
+        if (likedSongsList.length === 0) return;
+        
+        // Tạo bản sao của mảng và xáo trộn
+        const shuffledSongs = [...likedSongsList];
+        for (let i = shuffledSongs.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [shuffledSongs[i], shuffledSongs[j]] = [shuffledSongs[j], shuffledSongs[i]];
+        }
+        
+        // Phát bài đầu tiên
+        const firstSong = shuffledSongs[0];
+        playSongAndUpdatePlays(
+            firstSong.file_path,
+            firstSong.title,
+            firstSong.artist,
+            firstSong.cover_image,
+            firstSong.id,
+            firstSong.lyrics_file
+        );
+        
+        // Lưu danh sách phát vào localStorage
+        localStorage.setItem('currentPlaylist', JSON.stringify(shuffledSongs));
+        localStorage.setItem('currentPlaylistIndex', '0');
+    }
+
+    // Hàm phát bài tiếp theo
+    function playNextSong() {
+        const playlist = JSON.parse(localStorage.getItem('currentPlaylist') || '[]');
+        const currentIndex = parseInt(localStorage.getItem('currentPlaylistIndex') || '0');
+        
+        if (playlist.length === 0 || currentIndex >= playlist.length - 1) return;
+        
+        const nextSong = playlist[currentIndex + 1];
+        playSongAndUpdatePlays(
+            nextSong.file_path,
+            nextSong.title,
+            nextSong.artist,
+            nextSong.cover_image,
+            nextSong.id,
+            nextSong.lyrics_file
+        );
+        
+        localStorage.setItem('currentPlaylistIndex', (currentIndex + 1).toString());
+    }
+
+    // Hàm phát bài trước đó
+    function playPreviousSong() {
+        const playlist = JSON.parse(localStorage.getItem('currentPlaylist') || '[]');
+        const currentIndex = parseInt(localStorage.getItem('currentPlaylistIndex') || '0');
+        
+        if (playlist.length === 0 || currentIndex <= 0) return;
+        
+        const prevSong = playlist[currentIndex - 1];
+        playSongAndUpdatePlays(
+            prevSong.file_path,
+            prevSong.title,
+            prevSong.artist,
+            prevSong.cover_image,
+            prevSong.id,
+            prevSong.lyrics_file
+        );
+        
+        localStorage.setItem('currentPlaylistIndex', (currentIndex - 1).toString());
+    }
+
+    // Thêm sự kiện khi bài hát kết thúc
+    document.addEventListener('DOMContentLoaded', function() {
+        const audioPlayer = document.getElementById('audioPlayer');
+        if (audioPlayer) {
+            audioPlayer.addEventListener('ended', function() {
+                playNextSong();
+            });
+        }
+    });
+    </script>
 </body>
 </html>
-
 

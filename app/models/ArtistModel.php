@@ -228,4 +228,72 @@ class ArtistModel {
             return [];
         }
     }
+
+    public function getTotalArtists($search = '') {
+        try {
+            $sql = "SELECT COUNT(*) as total FROM artists";
+            $params = [];
+            
+            if (!empty($search)) {
+                $sql .= " WHERE name LIKE ?";
+                $searchTerm = "%$search%";
+                $params = [$searchTerm];
+            }
+            
+            $stmt = $this->db->prepare($sql);
+            $stmt->execute($params);
+            $result = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            return (int)($result['total'] ?? 0);
+        } catch (PDOException $e) {
+            error_log("Error in getTotalArtists: " . $e->getMessage());
+            return 0;
+        }
+    }
+
+    public function getArtistsWithPagination($search = '', $page = 1, $perPage = 10) {
+        try {
+            $offset = ($page - 1) * $perPage;
+            $sql = "SELECT a.*, 
+                    (SELECT COUNT(*) FROM songs WHERE artist_id = a.id) as song_count
+                    FROM artists a";
+            
+            $params = [];
+            
+            if (!empty($search)) {
+                $sql .= " WHERE a.name LIKE ?";
+                $searchTerm = "%$search%";
+                $params[] = $searchTerm;
+            }
+            
+            $sql .= " ORDER BY a.name ASC LIMIT ? OFFSET ?";
+            $params[] = $perPage;
+            $params[] = $offset;
+            
+            $stmt = $this->db->prepare($sql);
+            
+            // Bind parameters with proper types
+            foreach ($params as $key => $value) {
+                $paramType = is_int($value) ? PDO::PARAM_INT : PDO::PARAM_STR;
+                $stmt->bindValue($key + 1, $value, $paramType);
+            }
+            
+            $stmt->execute();
+            $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            
+            // Xử lý đường dẫn ảnh cho mỗi nghệ sĩ
+            foreach ($results as &$artist) {
+                if (!empty($artist['image'])) {
+                    $artist['image'] = '/uploads/artists/' . basename($artist['image']);
+                } else {
+                    $artist['image'] = '/placeholder.svg?height=200&width=200';
+                }
+            }
+            
+            return $results;
+        } catch (PDOException $e) {
+            error_log("Error in getArtistsWithPagination: " . $e->getMessage());
+            return [];
+        }
+    }
 } 

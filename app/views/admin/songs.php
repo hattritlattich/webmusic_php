@@ -5,14 +5,29 @@ if (!isset($_SESSION['user_role']) || $_SESSION['user_role'] !== 'admin') {
 }
 
 require_once __DIR__ . '/../../models/SongModel.php';
+require_once __DIR__ . '/../../models/ArtistModel.php';
 $songModel = new SongModel();
+$artistModel = new ArtistModel();
 $message = '';
+
+// Xử lý tìm kiếm và phân trang
+$search = $_GET['search'] ?? '';
+$page = max(1, intval($_GET['page'] ?? 1));
+$perPage = 10; // Số bài hát mỗi trang
+
+// Lấy tổng số bài hát và danh sách bài hát với phân trang
+$totalSongs = $songModel->getTotalSongs($search);
+$totalPages = ceil($totalSongs / $perPage);
+$songs = $songModel->getSongsWithPagination($search, $page, $perPage);
 
 // Thêm đoạn code này vào đầu file songs.php
 $uploadDir = 'public/uploads/songs/';
 if (!file_exists($uploadDir)) {
     mkdir($uploadDir, 0777, true);
 }
+
+// Lấy danh sách nghệ sĩ cho autocomplete
+$artists = $artistModel->getAllArtists();
 
 // Hàm tạo tên file an toàn
 function sanitizeFileName($name) {
@@ -203,9 +218,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 }
-
-// Lấy danh sách bài hát
-$songs = $songModel->getAllSongs();
 ?>
 
 <div class="bg-[#2f2739] rounded-lg shadow-lg p-6">
@@ -213,9 +225,24 @@ $songs = $songModel->getAllSongs();
     
     <div class="flex justify-between items-center mb-6">
         <h3 class="text-xl font-semibold text-white">Danh sách bài hát</h3>
-        <button onclick="openModal('addSongModal')" class="bg-[#1DB954] text-white px-4 py-2 rounded-md hover:bg-[#1ed760] transition-colors">
-            <i class="fas fa-plus mr-2"></i>Thêm bài hát
-        </button>
+        <div class="flex items-center space-x-4">
+            <!-- Search box -->
+            <form method="GET" class="flex items-center">
+                <input type="hidden" name="page" value="admin">
+                <input type="hidden" name="section" value="songs">
+                <div class="relative">
+                    <input type="text" name="search" value="<?= htmlspecialchars($search) ?>" 
+                           placeholder="Tìm kiếm bài hát..." 
+                           class="bg-[#393243] text-white px-4 py-2 rounded-full focus:outline-none focus:ring-2 focus:ring-[#1DB954] w-64">
+                    <button type="submit" class="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-white">
+                        <i class="fas fa-search"></i>
+                    </button>
+                </div>
+            </form>
+            <button onclick="openModal('addSongModal')" class="bg-[#1DB954] text-white px-4 py-2 rounded-full hover:bg-[#1ed760] transition-colors">
+                <i class="fas fa-plus mr-2"></i>Thêm bài hát
+            </button>
+        </div>
     </div>
 
     <div class="overflow-x-auto">
@@ -231,36 +258,85 @@ $songs = $songModel->getAllSongs();
                 </tr>
             </thead>
             <tbody>
-                <?php foreach ($songs as $song): ?>
-                <tr data-song-id="<?= htmlspecialchars($song['id']) ?>">
-                    <td class="py-3 px-4 text-gray-300"><?= htmlspecialchars($song['id']) ?></td>
-                    <td class="py-3 px-4">
-                        <img src="<?= htmlspecialchars($song['cover_image']) ?>" 
-                             alt="<?= htmlspecialchars($song['title']) ?>"
-                             class="w-12 h-12 object-cover rounded">
-                    </td>
-                    <td class="py-3 px-4 text-white" data-title="<?= htmlspecialchars($song['title']) ?>"><?= htmlspecialchars($song['title']) ?></td>
-                    <td class="py-3 px-4 text-gray-300"><?= htmlspecialchars($song['artist']) ?></td>
-                    <td class="py-3 px-4 text-gray-300"><?= htmlspecialchars($song['album']) ?></td>
-                    <td class="py-3 px-4" data-lyrics-file="<?= htmlspecialchars($song['lyrics_file'] ?? '') ?>">
-                        <button onclick="editSong(<?= $song['id'] ?>)" 
-                                class="text-[#1DB954] hover:text-[#1ed760] transition-colors mr-3">
-                            <i class="fas fa-edit"></i>
-                        </button>
-                        <button onclick="deleteSong(<?= $song['id'] ?>)" 
-                                class="text-red-400 hover:text-red-300 transition-colors mr-3">
-                            <i class="fas fa-trash"></i>
-                        </button>
-                        <button onclick="showLyrics(<?= $song['id'] ?>)"
-                                class="text-blue-400 hover:text-blue-300 transition-colors">
-                            <i class="fas fa-microphone-alt"></i>
-                        </button>
-                    </td>
-                </tr>
-                <?php endforeach; ?>
+                <?php if (empty($songs)): ?>
+                    <tr>
+                        <td colspan="6" class="py-4 px-4 text-center text-gray-400">
+                            <?= $search ? 'Không tìm thấy bài hát phù hợp' : 'Chưa có bài hát nào' ?>
+                        </td>
+                    </tr>
+                <?php else: ?>
+                    <?php foreach ($songs as $song): ?>
+                    <tr data-song-id="<?= htmlspecialchars($song['id']) ?>">
+                        <td class="py-3 px-4 text-gray-300"><?= htmlspecialchars($song['id']) ?></td>
+                        <td class="py-3 px-4">
+                            <img src="<?= htmlspecialchars($song['cover_image']) ?>" 
+                                 alt="<?= htmlspecialchars($song['title']) ?>"
+                                 class="w-12 h-12 object-cover rounded">
+                        </td>
+                        <td class="py-3 px-4 text-white" data-title="<?= htmlspecialchars($song['title']) ?>"><?= htmlspecialchars($song['title']) ?></td>
+                        <td class="py-3 px-4 text-gray-300"><?= htmlspecialchars($song['artist']) ?></td>
+                        <td class="py-3 px-4 text-gray-300"><?= htmlspecialchars($song['album']) ?></td>
+                        <td class="py-3 px-4" data-lyrics-file="<?= htmlspecialchars($song['lyrics_file'] ?? '') ?>">
+                            <button onclick="editSong(<?= $song['id'] ?>)" 
+                                    class="text-[#1DB954] hover:text-[#1ed760] transition-colors mr-3">
+                                <i class="fas fa-edit"></i>
+                            </button>
+                            <button onclick="deleteSong(<?= $song['id'] ?>)" 
+                                    class="text-red-400 hover:text-red-300 transition-colors mr-3">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                            <button onclick="showLyrics(<?= $song['id'] ?>)"
+                                    class="text-blue-400 hover:text-blue-300 transition-colors">
+                                <i class="fas fa-microphone-alt"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                <?php endif; ?>
             </tbody>
         </table>
     </div>
+
+    <!-- Pagination -->
+    <?php if ($totalPages > 1): ?>
+    <div class="flex justify-center mt-6">
+        <div class="flex items-center space-x-2">
+            <?php if ($page > 1): ?>
+                <a href="?page=admin&section=songs&search=<?= urlencode($search) ?>&page=1" 
+                   class="px-3 py-1 rounded bg-[#393243] text-white hover:bg-[#1DB954]">
+                    <i class="fas fa-angle-double-left"></i>
+                </a>
+                <a href="?page=admin&section=songs&search=<?= urlencode($search) ?>&page=<?= $page - 1 ?>" 
+                   class="px-3 py-1 rounded bg-[#393243] text-white hover:bg-[#1DB954]">
+                    <i class="fas fa-angle-left"></i>
+                </a>
+            <?php endif; ?>
+
+            <?php
+            $startPage = max(1, $page - 2);
+            $endPage = min($totalPages, $page + 2);
+            
+            for ($i = $startPage; $i <= $endPage; $i++):
+            ?>
+                <a href="?page=admin&section=songs&search=<?= urlencode($search) ?>&page=<?= $i ?>" 
+                   class="px-3 py-1 rounded <?= $i === $page ? 'bg-[#1DB954] text-white' : 'bg-[#393243] text-white hover:bg-[#1DB954]' ?>">
+                    <?= $i ?>
+                </a>
+            <?php endfor; ?>
+
+            <?php if ($page < $totalPages): ?>
+                <a href="?page=admin&section=songs&search=<?= urlencode($search) ?>&page=<?= $page + 1 ?>" 
+                   class="px-3 py-1 rounded bg-[#393243] text-white hover:bg-[#1DB954]">
+                    <i class="fas fa-angle-right"></i>
+                </a>
+                <a href="?page=admin&section=songs&search=<?= urlencode($search) ?>&page=<?= $totalPages ?>" 
+                   class="px-3 py-1 rounded bg-[#393243] text-white hover:bg-[#1DB954]">
+                    <i class="fas fa-angle-double-right"></i>
+                </a>
+            <?php endif; ?>
+        </div>
+    </div>
+    <?php endif; ?>
 </div>
 
 <!-- Modal Thêm Bài Hát -->
@@ -282,9 +358,14 @@ $songs = $songModel->getAllSongs();
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-300 mb-1">Nghệ sĩ</label>
-                    <input type="text" name="artist" required 
+                    <input type="text" name="artist" id="artistInput" list="artistList" required 
                            class="w-full p-2 bg-[#393243] border border-[#393243] rounded text-white focus:outline-none focus:border-[#1DB954]"
                            placeholder="Nhập tên nghệ sĩ">
+                    <datalist id="artistList">
+                        <?php foreach ($artists as $artist): ?>
+                            <option value="<?= htmlspecialchars($artist['name']) ?>">
+                        <?php endforeach; ?>
+                    </datalist>
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-300 mb-1">Album</label>
@@ -344,7 +425,7 @@ $songs = $songModel->getAllSongs();
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-300 mb-1">Nghệ sĩ</label>
-                    <input type="text" name="artist" id="edit_artist" required 
+                    <input type="text" name="artist" id="edit_artist" list="artistList" required 
                            class="w-full p-2 bg-[#393243] border border-[#393243] rounded text-white focus:outline-none focus:border-[#1DB954]">
                 </div>
                 <div>
@@ -399,6 +480,7 @@ $songs = $songModel->getAllSongs();
 
 <script>
 const songsData = <?= json_encode($songs) ?>;
+const artistsData = <?= json_encode($artists) ?>;
 
 function openModal(modalId) {
     const modal = document.getElementById(modalId);

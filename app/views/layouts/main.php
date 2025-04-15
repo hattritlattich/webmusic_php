@@ -19,9 +19,16 @@
             right: 0;
             z-index: 9999;
         }
+        /* Ẩn player trong trang quản lý bài hát */
+        .admin-songs-page #audioPlayerLayer {
+            display: none !important;
+        }
+        .admin-songs-page #mainContent {
+            padding-bottom: 0;
+        }
     </style>
 </head>
-<body class="bg-[#1a1a1a] text-white min-h-screen">
+<body class="bg-[#1a1a1a] text-white min-h-screen <?= isset($_GET['page']) && $_GET['page'] === 'admin' && isset($_GET['section']) && $_GET['section'] === 'songs' ? 'admin-songs-page' : '' ?>">
     <!-- Nội dung trang -->
     <div id="mainContent">
         <?php include $content; ?>
