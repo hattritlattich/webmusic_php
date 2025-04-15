@@ -8,6 +8,16 @@ require_once __DIR__ . '/../../models/ArtistModel.php';
 $artistModel = new ArtistModel();
 $message = '';
 
+// Xử lý tìm kiếm và phân trang
+$search = $_GET['search'] ?? '';
+$page = max(1, intval($_GET['page'] ?? 1));
+$perPage = 10; // Số nghệ sĩ mỗi trang
+
+// Lấy tổng số nghệ sĩ và danh sách nghệ sĩ với phân trang
+$totalArtists = $artistModel->getTotalArtists($search);
+$totalPages = ceil($totalArtists / $perPage);
+$artists = $artistModel->getArtistsWithPagination($search, $page, $perPage);
+
 // Xử lý AJAX request để lấy thông tin nghệ sĩ
 if (isset($_GET['ajax']) && $_GET['ajax'] === 'get_artist') {
     $artistId = $_GET['id'] ?? 0;
@@ -41,57 +51,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         switch ($_POST['action']) {
             case 'add':
                 try {
-                    // Kiểm tra tên nghệ sĩ đã tồn tại chưa
-                    $artistName = trim($_POST['name']);
-                    if ($artistModel->getArtistByName($artistName)) {
-                        throw new Exception("Nghệ sĩ này đã tồn tại trong hệ thống");
+                    if (empty($_POST['name'])) {
+                        throw new Exception("Tên nghệ sĩ không được để trống");
                     }
 
-                    if (!isset($_FILES['image'])) {
-                        throw new Exception("Vui lòng chọn ảnh nghệ sĩ");
+                    $data = [
+                        'name' => trim($_POST['name']),
+                        'bio' => trim($_POST['bio'] ?? '')
+                    ];
+
+                    // Xử lý upload ảnh
+                    if (!empty($_FILES['image']['name'])) {
+                        $imageFile = $_FILES['image'];
+                        if ($imageFile['error'] === UPLOAD_ERR_OK) {
+                            $uploadDir = 'uploads/artists/';
+                            $fullUploadPath = __DIR__ . '/../../../public/' . $uploadDir;
+                            
+                            if (!file_exists($fullUploadPath)) {
+                                mkdir($fullUploadPath, 0777, true);
+                            }
+                            
+                            $imageFileName = uniqid() . '_' . preg_replace("/[^a-zA-Z0-9.]/", "", $imageFile['name']);
+                            if (move_uploaded_file($imageFile['tmp_name'], $fullUploadPath . $imageFileName)) {
+                                $data['image'] = $uploadDir . $imageFileName;
+                            }
+                        }
                     }
 
-                    $imageFile = $_FILES['image'];
-
-                    if ($imageFile['error'] !== UPLOAD_ERR_OK) {
-                        throw new Exception("Lỗi khi upload ảnh");
-                    }
-
-                    $uploadDir = 'uploads/artists/';
-                    $fullUploadPath = __DIR__ . '/../../../public/' . $uploadDir;
-                    if (!file_exists($fullUploadPath)) {
-                        mkdir($fullUploadPath, 0777, true);
-                    }
-
-                    $imageFileName = uniqid() . '_' . preg_replace("/[^a-zA-Z0-9.]/", "", $imageFile['name']);
-
-                    if (!move_uploaded_file($imageFile['tmp_name'], $fullUploadPath . $imageFileName)) {
-                        throw new Exception("Không thể lưu ảnh");
-                    }
-
-                    $result = $artistModel->addArtist([
-                        'name' => $artistName,
-                        'image' => $uploadDir . $imageFileName
-                    ]);
-
-                    if ($result) {
+                    if ($artistModel->addArtist($data)) {
                         $message = '<div class="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded mb-4">
                             Thêm nghệ sĩ thành công!</div>';
-                    } else {
-                        throw new Exception("Không thể thêm nghệ sĩ");
                     }
-
                 } catch (Exception $e) {
-                    // Xóa file ảnh nếu đã upload nhưng thêm vào DB thất bại
-                    if (isset($imageFileName) && file_exists($fullUploadPath . $imageFileName)) {
-                        unlink($fullUploadPath . $imageFileName);
-                    }
-                    
                     $message = '<div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
                         Lỗi: ' . htmlspecialchars($e->getMessage()) . '</div>';
                 }
                 break;
-
             case 'edit':
                 try {
                     if (empty($_POST['artist_id'])) {
@@ -101,12 +96,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $data = [
                         'id' => $_POST['artist_id'],
                         'name' => trim($_POST['name']),
-                        'followers' => intval($_POST['followers'] ?? 0)
+                        'bio' => trim($_POST['bio'] ?? '')
                     ];
 
+                    // Xử lý upload ảnh mới nếu có
                     if (!empty($_FILES['image']['name'])) {
                         $imageFile = $_FILES['image'];
                         if ($imageFile['error'] === UPLOAD_ERR_OK) {
+                            $uploadDir = 'uploads/artists/';
+                            $fullUploadPath = __DIR__ . '/../../../public/' . $uploadDir;
+                            
+                            if (!file_exists($fullUploadPath)) {
+                                mkdir($fullUploadPath, 0777, true);
+                            }
+                            
                             $imageFileName = uniqid() . '_' . preg_replace("/[^a-zA-Z0-9.]/", "", $imageFile['name']);
                             if (move_uploaded_file($imageFile['tmp_name'], $fullUploadPath . $imageFileName)) {
                                 $data['image'] = $uploadDir . $imageFileName;
@@ -125,7 +128,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         Lỗi: ' . htmlspecialchars($e->getMessage()) . '</div>';
                 }
                 break;
-
             case 'delete':
                 try {
                     if (empty($_POST['artist_id'])) {
@@ -146,81 +148,151 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 }
-
-$artists = $artistModel->getAllArtists();
 ?>
 
 <div class="bg-[#2f2739] rounded-lg shadow-lg p-6">
     <?= $message ?>
     
     <div class="flex justify-between items-center mb-6">
-        <h3 class="text-xl font-semibold text-white">Quản lý Nghệ sĩ</h3>
-        <button onclick="openModal('addArtistModal')" 
-                class="bg-[#1DB954] text-white px-4 py-2 rounded-full hover:bg-[#1ed760] transition-colors">
-            <i class="fas fa-plus mr-2"></i>Thêm Nghệ sĩ
-        </button>
+        <h3 class="text-xl font-semibold text-white">Danh sách nghệ sĩ</h3>
+        <div class="flex items-center space-x-4">
+            <!-- Search box -->
+            <form method="GET" class="flex items-center">
+                <input type="hidden" name="page" value="admin">
+                <input type="hidden" name="section" value="artists">
+                <div class="relative">
+                    <input type="text" name="search" value="<?= htmlspecialchars($search) ?>" 
+                           placeholder="Tìm kiếm nghệ sĩ..." 
+                           class="bg-[#393243] text-white px-4 py-2 rounded-full focus:outline-none focus:ring-2 focus:ring-[#1DB954] w-64">
+                    <button type="submit" class="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-white">
+                        <i class="fas fa-search"></i>
+                    </button>
+                </div>
+            </form>
+            <button onclick="openModal('addArtistModal')" class="bg-[#1DB954] text-white px-4 py-2 rounded-full hover:bg-[#1ed760] transition-colors">
+                <i class="fas fa-plus mr-2"></i>Thêm nghệ sĩ
+            </button>
+        </div>
     </div>
 
     <div class="overflow-x-auto">
         <table class="min-w-full">
             <thead class="bg-[#393243]">
                 <tr>
+                    <th class="py-3 px-4 text-left text-gray-300">ID</th>
                     <th class="py-3 px-4 text-left text-gray-300">Ảnh</th>
                     <th class="py-3 px-4 text-left text-gray-300">Tên nghệ sĩ</th>
-                    <th class="py-3 px-4 text-right text-gray-300">Thao tác</th>
+                    <th class="py-3 px-4 text-left text-gray-300">Số bài hát</th>
+                    <th class="py-3 px-4 text-left text-gray-300">Thao tác</th>
                 </tr>
             </thead>
             <tbody>
-                <?php foreach ($artists as $artist): ?>
-                <tr class="border-b border-[#393243] hover:bg-[#393243] transition-colors">
-                    <td class="py-3 px-4">
-                        <img src="<?= htmlspecialchars($artist['image']) ?>" 
-                             alt="<?= htmlspecialchars($artist['name']) ?>"
-                             class="w-12 h-12 rounded-full object-cover">
-                    </td>
-                    <td class="py-3 px-4 text-white"><?= htmlspecialchars($artist['name']) ?></td>
-                    <td class="py-3 px-4 text-right">
-                        <button onclick="editArtist(<?= $artist['id'] ?>)" 
-                                class="text-[#1DB954] hover:text-[#1ed760] transition-colors mr-3">
-                            <i class="fas fa-edit"></i>
-                        </button>
-                        <button onclick="deleteArtist(<?= $artist['id'] ?>)" 
-                                class="text-red-400 hover:text-red-300 transition-colors">
-                            <i class="fas fa-trash"></i>
-                        </button>
-                    </td>
-                </tr>
-                <?php endforeach; ?>
+                <?php if (empty($artists)): ?>
+                    <tr>
+                        <td colspan="5" class="py-4 px-4 text-center text-gray-400">
+                            <?= $search ? 'Không tìm thấy nghệ sĩ phù hợp' : 'Chưa có nghệ sĩ nào' ?>
+                        </td>
+                    </tr>
+                <?php else: ?>
+                    <?php foreach ($artists as $artist): ?>
+                    <tr data-artist-id="<?= htmlspecialchars($artist['id']) ?>">
+                        <td class="py-3 px-4 text-gray-300"><?= htmlspecialchars($artist['id']) ?></td>
+                        <td class="py-3 px-4">
+                            <img src="<?= htmlspecialchars($artist['image']) ?>" 
+                                 alt="<?= htmlspecialchars($artist['name']) ?>"
+                                 class="w-12 h-12 object-cover rounded">
+                        </td>
+                        <td class="py-3 px-4 text-white"><?= htmlspecialchars($artist['name']) ?></td>
+                        <td class="py-3 px-4 text-gray-300"><?= htmlspecialchars($artist['song_count']) ?></td>
+                        <td class="py-3 px-4">
+                            <button onclick="editArtist(<?= $artist['id'] ?>)" 
+                                    class="text-[#1DB954] hover:text-[#1ed760] transition-colors mr-3">
+                                <i class="fas fa-edit"></i>
+                            </button>
+                            <button onclick="deleteArtist(<?= $artist['id'] ?>)" 
+                                    class="text-red-400 hover:text-red-300 transition-colors">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                <?php endif; ?>
             </tbody>
         </table>
     </div>
+
+    <!-- Pagination -->
+    <?php if ($totalPages > 1): ?>
+    <div class="flex justify-center mt-6">
+        <div class="flex items-center space-x-2">
+            <?php if ($page > 1): ?>
+                <a href="?page=admin&section=artists&search=<?= urlencode($search) ?>&page=1" 
+                   class="px-3 py-1 rounded bg-[#393243] text-white hover:bg-[#1DB954]">
+                    <i class="fas fa-angle-double-left"></i>
+                </a>
+                <a href="?page=admin&section=artists&search=<?= urlencode($search) ?>&page=<?= $page - 1 ?>" 
+                   class="px-3 py-1 rounded bg-[#393243] text-white hover:bg-[#1DB954]">
+                    <i class="fas fa-angle-left"></i>
+                </a>
+            <?php endif; ?>
+
+            <?php
+            $startPage = max(1, $page - 2);
+            $endPage = min($totalPages, $page + 2);
+            
+            for ($i = $startPage; $i <= $endPage; $i++):
+            ?>
+                <a href="?page=admin&section=artists&search=<?= urlencode($search) ?>&page=<?= $i ?>" 
+                   class="px-3 py-1 rounded <?= $i === $page ? 'bg-[#1DB954] text-white' : 'bg-[#393243] text-white hover:bg-[#1DB954]' ?>">
+                    <?= $i ?>
+                </a>
+            <?php endfor; ?>
+
+            <?php if ($page < $totalPages): ?>
+                <a href="?page=admin&section=artists&search=<?= urlencode($search) ?>&page=<?= $page + 1 ?>" 
+                   class="px-3 py-1 rounded bg-[#393243] text-white hover:bg-[#1DB954]">
+                    <i class="fas fa-angle-right"></i>
+                </a>
+                <a href="?page=admin&section=artists&search=<?= urlencode($search) ?>&page=<?= $totalPages ?>" 
+                   class="px-3 py-1 rounded bg-[#393243] text-white hover:bg-[#1DB954]">
+                    <i class="fas fa-angle-double-right"></i>
+                </a>
+            <?php endif; ?>
+        </div>
+    </div>
+    <?php endif; ?>
 </div>
 
-<!-- Modal Thêm Nghệ sĩ -->
+<!-- Modal Thêm Nghệ Sĩ -->
 <div id="addArtistModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center">
-    <div class="bg-[#2f2739] rounded-lg p-8 max-w-md w-full">
-        <div class="flex justify-between items-center mb-6">
-            <h4 class="text-xl font-semibold text-white">Thêm nghệ sĩ mới</h4>
+    <div class="bg-[#2f2739] rounded-lg p-5 max-w-md w-full max-h-[80vh] overflow-y-auto">
+        <div class="flex justify-between items-center mb-4">
+            <h4 class="text-lg font-semibold text-white">Thêm nghệ sĩ mới</h4>
             <button onclick="closeModal('addArtistModal')" class="text-gray-400 hover:text-gray-200">
                 <i class="fas fa-times"></i>
             </button>
         </div>
         <form action="" method="POST" enctype="multipart/form-data">
             <input type="hidden" name="action" value="add">
-            <div class="space-y-4">
+            <div class="space-y-3">
                 <div>
                     <label class="block text-sm font-medium text-gray-300 mb-1">Tên nghệ sĩ</label>
                     <input type="text" name="name" required 
-                           class="w-full p-2 bg-[#393243] border border-[#393243] rounded text-white focus:outline-none focus:border-[#1DB954]"
-                           placeholder="Nhập tên nghệ sĩ">
+                           class="w-full p-2 bg-[#393243] border border-[#393243] rounded text-white focus:outline-none focus:border-[#1DB954]">
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-300 mb-1">Ảnh đại diện</label>
                     <input type="file" name="image" accept="image/*" required 
                            class="w-full p-2 bg-[#393243] border border-[#393243] rounded text-gray-300 focus:outline-none focus:border-[#1DB954]">
                 </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Tiểu sử</label>
+                    <textarea name="bio" rows="4"
+                              class="w-full p-2 bg-[#393243] border border-[#393243] rounded text-white focus:outline-none focus:border-[#1DB954]"
+                              placeholder="Nhập tiểu sử nghệ sĩ"></textarea>
+                </div>
             </div>
-            <div class="mt-6 flex justify-end space-x-3">
+            <div class="mt-4 flex justify-end space-x-3">
                 <button type="button" onclick="closeModal('addArtistModal')"
                         class="px-4 py-2 border border-gray-600 rounded text-gray-300 hover:bg-[#393243] transition-colors">
                     Hủy
@@ -234,22 +306,22 @@ $artists = $artistModel->getAllArtists();
     </div>
 </div>
 
-<!-- Thêm Modal Sửa Nghệ sĩ -->
+<!-- Modal Sửa Nghệ Sĩ -->
 <div id="editArtistModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center">
-    <div class="bg-[#2f2739] rounded-lg p-8 max-w-md w-full">
-        <div class="flex justify-between items-center mb-6">
-            <h4 class="text-xl font-semibold text-white">Sửa thông tin nghệ sĩ</h4>
+    <div class="bg-[#2f2739] rounded-lg p-5 max-w-md w-full max-h-[80vh] overflow-y-auto">
+        <div class="flex justify-between items-center mb-4">
+            <h4 class="text-lg font-semibold text-white">Sửa thông tin nghệ sĩ</h4>
             <button onclick="closeModal('editArtistModal')" class="text-gray-400 hover:text-gray-200">
                 <i class="fas fa-times"></i>
             </button>
         </div>
-        <form action="" method="POST" enctype="multipart/form-data">
+        <form action="" method="POST" enctype="multipart/form-data" id="editArtistForm">
             <input type="hidden" name="action" value="edit">
             <input type="hidden" name="artist_id" id="edit_artist_id">
-            <div class="space-y-4">
+            <div class="space-y-3">
                 <div>
                     <label class="block text-sm font-medium text-gray-300 mb-1">Tên nghệ sĩ</label>
-                    <input type="text" name="name" id="edit_artist_name" required 
+                    <input type="text" name="name" id="edit_name" required 
                            class="w-full p-2 bg-[#393243] border border-[#393243] rounded text-white focus:outline-none focus:border-[#1DB954]">
                 </div>
                 <div>
@@ -257,8 +329,14 @@ $artists = $artistModel->getAllArtists();
                     <input type="file" name="image" accept="image/*"
                            class="w-full p-2 bg-[#393243] border border-[#393243] rounded text-gray-300 focus:outline-none focus:border-[#1DB954]">
                 </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Tiểu sử</label>
+                    <textarea name="bio" id="edit_bio" rows="4"
+                              class="w-full p-2 bg-[#393243] border border-[#393243] rounded text-white focus:outline-none focus:border-[#1DB954]"
+                              placeholder="Nhập tiểu sử nghệ sĩ"></textarea>
+                </div>
             </div>
-            <div class="mt-6 flex justify-end space-x-3">
+            <div class="mt-4 flex justify-end space-x-3">
                 <button type="button" onclick="closeModal('editArtistModal')"
                         class="px-4 py-2 border border-gray-600 rounded text-gray-300 hover:bg-[#393243] transition-colors">
                     Hủy
@@ -272,7 +350,6 @@ $artists = $artistModel->getAllArtists();
     </div>
 </div>
 
-<!-- Thêm dữ liệu nghệ sĩ vào biến JavaScript -->
 <script>
 const artistsData = <?= json_encode($artists) ?>;
 
@@ -299,7 +376,8 @@ async function editArtist(id) {
         
         if (artist) {
             document.getElementById('edit_artist_id').value = artist.id;
-            document.getElementById('edit_artist_name').value = artist.name;
+            document.getElementById('edit_name').value = artist.name;
+            document.getElementById('edit_bio').value = artist.bio || '';
             openModal('editArtistModal');
         } else {
             throw new Error('Không tìm thấy nghệ sĩ');

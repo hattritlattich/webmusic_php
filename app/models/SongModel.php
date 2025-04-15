@@ -410,37 +410,67 @@ class SongModel {
         return sprintf("%d:%02d", $minutes, $remainingSeconds);
     }
 
-    public function getTotalSongs() {
+    public function getTotalSongs($search = '') {
         try {
-            $sql = "SELECT COUNT(*) FROM songs";
-            return $this->db->query($sql)->fetchColumn();
+            $sql = "SELECT COUNT(*) as total FROM songs";
+            $params = [];
+            
+            if (!empty($search)) {
+                $sql .= " WHERE title LIKE ? OR artist LIKE ? OR album LIKE ?";
+                $searchTerm = "%$search%";
+                $params = [$searchTerm, $searchTerm, $searchTerm];
+            }
+            
+            $stmt = $this->db->prepare($sql);
+            $stmt->execute($params);
+            $result = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            return (int)($result['total'] ?? 0);
         } catch (PDOException $e) {
             error_log("Error in getTotalSongs: " . $e->getMessage());
             return 0;
         }
     }
 
-    public function getSongsPaginated($offset, $limit) {
+    public function getSongsWithPagination($search = '', $page = 1, $perPage = 10) {
         try {
-            // Lấy danh sách bài hát có phân trang và thông tin like
-            $userId = $_SESSION['user_id'] ?? 0;
+            $offset = ($page - 1) * $perPage;
+            $sql = "SELECT songs.*, 
+                    CASE WHEN liked_songs.song_id IS NOT NULL THEN 1 ELSE 0 END as is_liked
+                    FROM songs 
+                    LEFT JOIN liked_songs ON songs.id = liked_songs.song_id 
+                        AND liked_songs.user_id = :user_id";
             
-            $sql = "SELECT s.*, 
-                    CASE WHEN ls.id IS NOT NULL THEN 1 ELSE 0 END as is_liked
-                    FROM songs s
-                    LEFT JOIN liked_songs ls ON s.id = ls.song_id AND ls.user_id = :user_id
-                    ORDER BY s.created_at DESC 
-                    LIMIT :offset, :limit";
-                    
+            $params = [':user_id' => $_SESSION['user_id'] ?? 0];
+            
+            if (!empty($search)) {
+                $sql .= " WHERE title LIKE :search OR artist LIKE :search OR album LIKE :search";
+                $params[':search'] = "%$search%";
+            }
+            
+            $sql .= " ORDER BY songs.created_at DESC LIMIT :limit OFFSET :offset";
+            $params[':limit'] = $perPage;
+            $params[':offset'] = $offset;
+            
             $stmt = $this->db->prepare($sql);
-            $stmt->bindValue(':user_id', $userId, PDO::PARAM_INT);
-            $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
-            $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
-            $stmt->execute();
             
-            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+            // Bind parameters with proper types
+            foreach ($params as $key => $value) {
+                $paramType = is_int($value) ? PDO::PARAM_INT : PDO::PARAM_STR;
+                $stmt->bindValue($key, $value, $paramType);
+            }
+            
+            $stmt->execute();
+            $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            
+            // Đảm bảo duration là số
+            foreach ($results as &$song) {
+                $song['duration'] = (int)($song['duration'] ?? 0);
+            }
+            
+            return $results;
         } catch (PDOException $e) {
-            error_log("Error in getSongsPaginated: " . $e->getMessage());
+            error_log("Error in getSongsWithPagination: " . $e->getMessage());
             return [];
         }
     }
@@ -462,6 +492,55 @@ class SongModel {
         } catch (PDOException $e) {
             error_log("Error in getLyrics: " . $e->getMessage());
             return null;
+        }
+    }
+
+    public function getTopLikedSongs($limit = 5) {
+        try {
+            $sql = "SELECT s.*, 
+                    COUNT(ls.id) as like_count,
+                    CASE WHEN user_liked.id IS NOT NULL THEN 1 ELSE 0 END as is_liked
+                    FROM songs s
+                    LEFT JOIN liked_songs ls ON s.id = ls.song_id
+                    LEFT JOIN liked_songs user_liked ON s.id = user_liked.song_id 
+                        AND user_liked.user_id = :user_id
+                    GROUP BY s.id
+                    ORDER BY like_count DESC, s.created_at DESC
+                    LIMIT :limit";
+                    
+            $stmt = $this->db->prepare($sql);
+            $userId = $_SESSION['user_id'] ?? 0;
+            $stmt->bindValue(':user_id', $userId, PDO::PARAM_INT);
+            $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+            $stmt->execute();
+            
+            $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            
+            // Xử lý đường dẫn file cho mỗi bài hát
+            foreach ($results as &$song) {
+                // Đảm bảo các trường không null
+                $song['title'] = $song['title'] ?? '';
+                $song['artist'] = $song['artist'] ?? '';
+                $song['album'] = $song['album'] ?? '';
+                $song['duration'] = $song['duration'] ?? '';
+                
+                // Xử lý đường dẫn file
+                if (!empty($song['file_path'])) {
+                    $song['file_path'] = '/uploads/songs/' . basename($song['file_path']);
+                }
+                
+                // Xử lý ảnh bìa
+                if (!empty($song['cover_image'])) {
+                    $song['cover_image'] = '/uploads/songs/' . basename($song['cover_image']);
+                } else {
+                    $song['cover_image'] = '/placeholder.svg?height=40&width=40';
+                }
+            }
+            
+            return $results;
+        } catch (PDOException $e) {
+            error_log("Error in getTopLikedSongs: " . $e->getMessage());
+            return [];
         }
     }
 } 
