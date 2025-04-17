@@ -62,27 +62,31 @@
                     </button>
                 </div>
 
-                <!-- Progress bar và volume -->
+                <!-- Volume Control -->
                 <div class="flex items-center space-x-4 flex-1 justify-end">
-                    <span id="currentTime" class="text-gray-400 text-sm">0:00</span>
-                    <div class="w-48 bg-gray-600 rounded-full h-1 cursor-pointer" id="progressBar">
-                        <div class="bg-white h-1 rounded-full" id="progress" style="width: 0%"></div>
-                    </div>
-                    <span id="duration" class="text-gray-400 text-sm">0:00</span>
-                    
-                    <div class="flex items-center space-x-2">
-                        <i class="fas fa-volume-up text-gray-400"></i>
-                        <input type="range" id="volumeSlider" 
-                               class="w-24 accent-[#1DB954]" 
-                               min="0" max="100" value="100">
-                    </div>
+                    <button id="volumeBtn" class="text-gray-400 hover:text-white">
+                        <i id="volumeIcon" class="fas fa-volume-up"></i>
+                    </button>
+                    <input type="range" id="volumeSlider" min="0" max="100" value="100" 
+                           class="w-24 h-1 bg-gray-600 rounded-lg appearance-none cursor-pointer">
+                </div>
+            </div>
+
+            <!-- Progress Bar -->
+            <div class="mt-4">
+                <div class="progress-container bg-gray-600 h-1 rounded-full cursor-pointer">
+                    <div id="progress" class="bg-[#1DB954] h-full rounded-full" style="width: 0%"></div>
+                </div>
+                <div class="flex justify-between mt-1 text-xs text-gray-400">
+                    <span id="currentTime">0:00</span>
+                    <span id="duration">0:00</span>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Audio element -->
-    <audio id="audioPlayer"></audio>
+    <!-- Audio Element -->
+    <audio id="audioPlayer" preload="metadata"></audio>
 
     <script>
     // Khởi tạo từ localStorage hoặc giá trị mặc định
@@ -142,23 +146,43 @@
 
     // Cập nhật hàm playSong
     function playSong(url, title, artist, image) {
-        // Tìm index của bài hát trong playlist hiện tại
-        currentSongIndex = currentPlaylist.findIndex(song => song.url === url);
+        // Khởi tạo audio player nếu chưa có
+        if (!window.audioPlayer) {
+            window.audioPlayer = document.getElementById('audioPlayer');
+        }
+        
+        // Khởi tạo player layer nếu chưa có
+        if (!window.playerLayer) {
+            window.playerLayer = document.getElementById('audioPlayerLayer');
+        }
+        
+        // Hiển thị player layer
+        window.playerLayer.classList.remove('hidden');
         
         // Cập nhật thông tin bài hát
         document.getElementById('currentSongTitle').textContent = title;
         document.getElementById('currentSongArtist').textContent = artist;
-        document.getElementById('currentSongImage').src = image;
+        document.getElementById('currentSongImage').src = image || '/uploads/artists/placeholder.jpg';
         
         // Xử lý audio
-        if (currentSong !== url) {
-            currentSong = url;
-            audioPlayer.src = url;
+        if (window.currentSong !== url) {
+            window.currentSong = url;
+            window.audioPlayer.src = url;
         }
         
-        audioPlayer.play();
-        isPlaying = true;
+        // Phát nhạc
+        window.audioPlayer.play().catch(error => {
+            console.error('Error playing song:', error);
+        });
+        
+        // Cập nhật trạng thái
+        window.isPlaying = true;
         updatePlayPauseIcon();
+        
+        // Lưu thông tin bài hát hiện tại
+        window.currentTitle = title;
+        window.currentArtist = artist;
+        window.currentImage = image;
     }
 
     // Hàm chuyển bài tiếp theo

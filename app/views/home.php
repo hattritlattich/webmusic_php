@@ -26,13 +26,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $playlistId = (int) $_POST['playlist_id'];
             $songId = (int) $_POST['song_id'];
 
-            $result = $playlistModel->addSongToPlaylist($playlistId, $songId);
-            if ($result['success']) {
-                $_SESSION['message'] = 'Đã thêm bài hát vào playlist thành công!';
-            } elseif ($result['error'] === 'song_exists') {
-                $_SESSION['message'] = 'Bài hát đã có trong playlist này.';
+            if (isset($_POST['action']) && $_POST['action'] === 'remove_song') {
+                // Xóa bài hát khỏi playlist
+                $result = $playlistModel->removeSongFromPlaylist($playlistId, $songId);
+                if ($result['success']) {
+                    $_SESSION['message'] = 'Đã xóa bài hát khỏi playlist thành công!';
+                } else {
+                    $_SESSION['error'] = $result['message'] ?? 'Lỗi khi xóa bài hát khỏi playlist.';
+                }
             } else {
-                $_SESSION['error'] = $result['message'] ?? 'Lỗi khi thêm bài hát vào playlist.';
+                // Thêm bài hát vào playlist
+                $result = $playlistModel->addSongToPlaylist($playlistId, $songId);
+                if ($result['success']) {
+                    $_SESSION['message'] = 'Đã thêm bài hát vào playlist thành công!';
+                } elseif ($result['error'] === 'song_exists') {
+                    $_SESSION['message'] = 'Bài hát đã có trong playlist này.';
+                } else {
+                    $_SESSION['error'] = $result['message'] ?? 'Lỗi khi thêm bài hát vào playlist.';
+                }
             }
 
             header("Location: /home");
@@ -865,6 +876,9 @@ function safeDisplay($data) {
             <button class="w-14 h-14 rounded-full bg-spotify-green text-black flex items-center justify-center shadow-lg" onclick="playPlaylist()">
                 <i class="fas fa-play text-2xl"></i>
             </button>
+            <button class="w-14 h-14 rounded-full bg-white/10 text-white flex items-center justify-center hover:bg-white/20" onclick="shufflePlaylist()">
+                <i class="fas fa-random text-2xl"></i>
+            </button>
             <button class="text-3xl text-gray-400 hover:text-white">
                 <i class="far fa-heart"></i>
             </button>
@@ -894,6 +908,7 @@ function safeDisplay($data) {
                 <tbody id="user-playlist-songs">
                     <?php foreach($songs as $index => $song): ?>
                      <tr class="hover:bg-white/10 group cursor-pointer" 
+                        data-song-id="<?= $song['id'] ?>"
                         onclick="playSongAndUpdatePlays(
                             '<?= htmlspecialchars($song['file_path']) ?>', 
                             '<?= htmlspecialchars($song['title']) ?>', 
@@ -941,7 +956,12 @@ function safeDisplay($data) {
                             }
                             ?>
                         </td>
-                        <td class="text-right pr-4"><?= formatDuration($song['duration']) ?></td>
+                        <td class="text-right pr-4">
+                            <button onclick="event.stopPropagation(); removeSongFromPlaylist('<?= $playlistId ?>', '<?= $song['id'] ?>')" 
+                                    class="text-gray-400 hover:text-white">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </td>
                     </tr>
                     <?php endforeach; ?>
                 </tbody>
@@ -2259,7 +2279,7 @@ function safeDisplay($data) {
                             </div>
                             <div class="flex items-center space-x-4">
                                 <span class="text-gray-400 text-sm">${song.duration}</span>
-                                <button onclick="playSong('${song.url}', '${song.title}', '${artistName}', '${song.image}')"
+                                <button onclick="playSongAndUpdatePlays('${song.url}', '${song.title}', '${artistName}', '${song.image}')"
                                         class="text-gray-400 hover:text-white px-4">
                                     <i class="fas fa-play"></i>
                                 </button>
@@ -2964,38 +2984,15 @@ function removeSongFromPlaylist(playlistId, songId) {
         return;
     }
 
-    fetch(`/music_website/app/models/PlaylistModel.php?action=removeSong&playlistId=${playlistId}&songId=${songId}`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        }
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            // Xóa phần tử khỏi DOM
-            const songRow = document.querySelector(`tr[data-song-id="${songId}"]`);
-            if (songRow) {
-                songRow.remove();
-            }
-            
-            // Cập nhật số lượng bài hát
-            const songCount = document.getElementById('playlist-count');
-            if (songCount) {
-                const currentCount = parseInt(songCount.textContent);
-                songCount.textContent = currentCount - 1;
-            }
-
-            // Hiển thị thông báo thành công
-            showNotification('Đã xóa bài hát khỏi playlist', 'success');
-        } else {
-            showNotification(data.message || 'Có lỗi xảy ra khi xóa bài hát', 'error');
-        }
-    })
-    .catch(error => {
-        console.error('Error:', error);
-        showNotification('Có lỗi xảy ra khi xóa bài hát', 'error');
-    });
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.innerHTML = `
+        <input type="hidden" name="action" value="remove_song">
+        <input type="hidden" name="playlist_id" value="${playlistId}">
+        <input type="hidden" name="song_id" value="${songId}">
+    `;
+    document.body.appendChild(form);
+    form.submit();
 }
 
 // Thêm hàm hiển thị thông báo
@@ -3014,6 +3011,42 @@ function showNotification(message, type = 'success') {
 }
 
 // ... existing code ...
+</script>
+
+<script>
+function shufflePlaylist() {
+    const songs = document.querySelectorAll('#user-playlist-songs tr');
+    const songArray = Array.from(songs);
+    
+    // Fisher-Yates shuffle algorithm
+    for (let i = songArray.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [songArray[i], songArray[j]] = [songArray[j], songArray[i]];
+    }
+    
+    // Clear the current playlist
+    const playlistContainer = document.getElementById('user-playlist-songs');
+    playlistContainer.innerHTML = '';
+    
+    // Add shuffled songs back to the playlist
+    songArray.forEach((song, index) => {
+        // Update the song number
+        const numberCell = song.querySelector('td:first-child span:first-child');
+        if (numberCell) {
+            numberCell.textContent = index + 1;
+        }
+        playlistContainer.appendChild(song);
+    });
+    
+    // Play the first song in the shuffled playlist
+    const firstSong = songArray[0];
+    if (firstSong) {
+        const playButton = firstSong.querySelector('td:first-child span:last-child i');
+        if (playButton) {
+            playButton.click();
+        }
+    }
+}
 </script>
 
 </body>
