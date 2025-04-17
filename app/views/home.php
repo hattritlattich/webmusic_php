@@ -1,11 +1,7 @@
 <?php
 require_once __DIR__ . '/../models/ArtistModel.php';
 require_once __DIR__ . '/../models/SongModel.php';
-
-// CSRF token
-if (empty($_SESSION['csrf_token'])) {
-    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
-}
+require_once __DIR__ . '/../models/PlaylistModel.php';
 
 // Validate page
 $page = isset($_GET['page']) ? htmlspecialchars($_GET['page'], ENT_QUOTES, 'UTF-8') : 'home';
@@ -14,22 +10,100 @@ $page = isset($_GET['page']) ? htmlspecialchars($_GET['page'], ENT_QUOTES, 'UTF-
 $songModel = new SongModel();
 $artistModel = new ArtistModel();
 
-// Xử lý like/unlike bài hát
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'toggle_like') {
-    if (empty($_SESSION['user_id'])) {
-        header("Location: ?page=login");
+$userId = $_SESSION['user_id'] ?? 0;
+$playlistModel = new PlaylistModel();
+$userPlaylists = $playlistModel->getUserPlaylists($userId);
+
+// CSRF token
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        // THÊM BÀI HÁT VÀO PLAYLIST
+        if (isset($_POST['playlist_id'], $_POST['song_id'])) {
+            $playlistId = (int) $_POST['playlist_id'];
+            $songId = (int) $_POST['song_id'];
+
+            $result = $playlistModel->addSongToPlaylist($playlistId, $songId);
+            if ($result['success']) {
+                $_SESSION['message'] = 'Đã thêm bài hát vào playlist thành công!';
+            } elseif ($result['error'] === 'song_exists') {
+                $_SESSION['message'] = 'Bài hát đã có trong playlist này.';
+            } else {
+                $_SESSION['error'] = $result['message'] ?? 'Lỗi khi thêm bài hát vào playlist.';
+            }
+
+            header("Location: /home");
+            exit;
+        }
+
+        // TẠO PLAYLIST MỚI
+        if (isset($_POST['name']) && isset($_SESSION['user_id'])) {
+            $name = trim($_POST['name']);
+            $description = trim($_POST['description'] ?? '');
+            $userId = $_SESSION['user_id'];
+
+            if (empty($name)) {
+                throw new Exception('Tên danh sách phát không được để trống');
+            }
+
+            $playlistModel->addPlaylist([
+                'name' => $name,
+                'description' => $description,
+                'user_id' => $userId
+            ]);
+
+            $_SESSION['message'] = 'Tạo danh sách phát thành công!';
+            header('Location: /home');
+            exit;
+        }
+
+        // LIKE / UNLIKE
+        if (($_POST['action'] ?? '') === 'toggle_like') {
+            if (empty($_SESSION['user_id'])) {
+                header("Location: ?page=login");
+                exit;
+            }
+            if (!empty($_POST['song_id'])) {
+                $songModel->toggleLike((int)$_POST['song_id']);
+                $_SESSION['success_message'] = 'Đã cập nhật trạng thái yêu thích';
+            }
+            header("Location: ?page=home");
+            exit;
+        }
+
+        // XÓA PLAYLIST
+        if (($_POST['action'] ?? '') === 'delete' && isset($_POST['playlist_id'])) {
+            if (empty($_SESSION['user_id'])) {
+                header("Location: ?page=login");
+                exit;
+            }
+            
+            $playlistId = (int)$_POST['playlist_id'];
+            
+            // Kiểm tra xem playlist có thuộc về người dùng hiện tại không
+            $playlist = $playlistModel->getPlaylistById($playlistId);
+            if ($playlist && $playlist['user_id'] == $_SESSION['user_id']) {
+                if ($playlistModel->deletePlaylist($playlistId)) {
+                    $_SESSION['message'] = 'Đã xóa playlist thành công!';
+                } else {
+                    $_SESSION['error'] = 'Không thể xóa playlist. Vui lòng thử lại sau.';
+                }
+            } else {
+                $_SESSION['error'] = 'Bạn không có quyền xóa playlist này.';
+            }
+            
+            header("Location: /home");
+            exit;
+        }
+
+    } catch (Exception $e) {
+        $_SESSION['error'] = 'Lỗi: ' . htmlspecialchars($e->getMessage());
+        header("Location: /home");
         exit;
     }
-    if (!empty($_POST['song_id'])) {
-        try {
-            $songModel->toggleLike((int)$_POST['song_id']);
-            $_SESSION['success_message'] = 'Đã cập nhật trạng thái yêu thích';
-        } catch (Exception $e) {
-            $_SESSION['error_message'] = $e->getMessage();
-        }
-    }
-    header("Location: ?page=home");
-    exit;
 }
 
 // Xử lý tìm kiếm nếu có
@@ -163,15 +237,38 @@ function safeDisplay($data) {
                 </div>
                 <div class="border-t border-gray-800 pt-4">
                     <?php if (!empty($_SESSION['user_id'])): ?>
-                    <h3 class="text-gray-400 text-sm font-semibold mb-4">DANH SÁCH PHÁT CỦA BẠN</h3>
-                    <div id="userPlaylists" class="space-y-2">
-                        <!-- Danh sách playlist sẽ được thêm vào đây bằng JavaScript -->
-                    </div>
+                        <?php
+                        require_once __DIR__ . '/../models/PlaylistModel.php';
+                        $playlistModel = new PlaylistModel();
+                        $userPlaylists = $playlistModel->getUserPlaylists($_SESSION['user_id']);
+                        ?>
+                        
+                        <h3 class="text-gray-400 text-sm font-semibold mb-4">DANH SÁCH PHÁT CỦA BẠN</h3>
+                        <div id="userPlaylists" class="space-y-2">
+                            <?php if (empty($userPlaylists)): ?>
+                                <p class="text-gray-500 text-sm italic">Bạn chưa có playlist nào.</p>
+                            <?php else: ?>
+                                <?php foreach ($userPlaylists as $pl): ?>
+    <div class="text-sm text-gray-300 hover:text-white cursor-pointer" onclick="openPlaylist(<?= $pl['id'] ?>)">
+        <i class="fas fa-music mr-2 text-gray-500"></i>
+        <?= htmlspecialchars($pl['name']) ?>
+    </div>
+<?php endforeach; ?>
+
+                            <?php endif; ?>
+                        </div>
                     <?php endif; ?>
                 </div>
             </div>
         </div>
-
+       
+<script>
+    function openPlaylist(playlistId) {
+        // Chuyển hướng đến trang playlist tương ứng
+        window.location.href = "?page=playlist&id=" + playlistId;
+    }
+</script>
+</script>
         <!-- Main Content -->
         <div class="flex-1 flex flex-col overflow-hidden">
             <!-- Top Navigation -->
@@ -674,12 +771,10 @@ function safeDisplay($data) {
                                                             <i class="<?= $song['is_liked'] ? 'fas' : 'far' ?> fa-heart"></i>
                                                         </button>
                                                     </form>
-                                                    <button onclick="<?= empty($_SESSION['user_id']) ? 'window.location.href=\'?page=login\'' : 'openAddToPlaylistModal({
-                                                        url: \'' . htmlspecialchars($song['file_path']) . '\',
-                                                        title: \'' . htmlspecialchars($song['title']) . '\',
-                                                        artist: \'' . htmlspecialchars($song['artist']) . '\',
-                                                        image: \'' . htmlspecialchars($song['cover_image']) . '\'
-                                                    })' ?>" class="text-gray-400 hover:text-white ml-2">
+                                                    <button onclick="<?= empty($_SESSION['user_id']) 
+                                                        ? 'window.location.href=\'?page=login\'' 
+                                                        : 'openAddToPlaylistModal(' . $song['id'] . ')' ?>" 
+                                                        class="text-gray-400 hover:text-white ml-2">
                                                         <i class="fas fa-plus"></i>
                                                     </button>
                                                 </td>
@@ -715,285 +810,216 @@ function safeDisplay($data) {
                             <?php endif; ?>
                         </div>
                     </section>
-                <?php elseif($page == 'playlist'): ?>
-                    <?php 
-                    // Kiểm tra xem có phải là playlist của người dùng không
-                    $playlistId = isset($_GET['id']) ? $_GET['id'] : '';
-                    $userPlaylist = false;
-                    $showError = false;
-                    
-                    // Nếu ID bắt đầu bằng số lớn (timestamp) thì là playlist của người dùng
-                    if (is_numeric($playlistId) && strlen($playlistId) > 10) {
-                        // Load danh sách playlist từ JavaScript để PHP xử lý
-                        echo "<script>
-                            document.addEventListener('DOMContentLoaded', function() {
-                                // Lấy danh sách playlist từ localStorage
-                                const storedPlaylists = localStorage.getItem('userPlaylists');
-                                if (storedPlaylists) {
-                                    const userPlaylists = JSON.parse(storedPlaylists);
-                                    const currentPlaylist = userPlaylists.find(p => p.id === '$playlistId');
-                                    
-                                    if (currentPlaylist) {
-                                        // Cập nhật DOM
-                                        document.getElementById('playlist-title').textContent = currentPlaylist.name;
-                                        document.getElementById('playlist-description').textContent = currentPlaylist.description || '';
-                                        document.getElementById('playlist-count').textContent = currentPlaylist.songs ? currentPlaylist.songs.length : 0;
-                                        
-                                        // Hiển thị danh sách bài hát
-                                        const songListContainer = document.getElementById('user-playlist-songs');
-                                        if (songListContainer) {
-                                            if (!currentPlaylist.songs || currentPlaylist.songs.length === 0) {
-                                                songListContainer.innerHTML = '<tr><td colspan=\"5\" class=\"py-8 text-center text-gray-400\">Chưa có bài hát nào trong danh sách phát này</td></tr>';
-                                            } else {
-                                                songListContainer.innerHTML = '';
-                                                currentPlaylist.songs.forEach((song, index) => {
-                                                    const row = document.createElement('tr');
-                                                    row.className = 'hover:bg-white/10 group';
-                                                    row.innerHTML = `
-                                                        <td class=\"py-3 px-2\">
-                                                            <span class=\"group-hover:hidden\">\${index + 1}</span>
-                                                            <span class=\"hidden group-hover:inline cursor-pointer\" onclick=\"playSong('\${song.url}', '\${song.title}', '\${song.artist}', '\${song.image}')\">
-                                                                <i class=\"fas fa-play text-white\"></i>
-                                                            </span>
-                                                        </td>
-                                                        <td>
-                                                            <div class=\"flex items-center cursor-pointer\" onclick=\"playSong('\${song.url}', '\${song.title}', '\${song.artist}', '\${song.image}')\">
-                                                                <img src=\"\${song.image || '/uploads/artists/placeholder.jpg'}\" 
-                                                                     alt=\"Ảnh bìa bài hát\" 
-                                                                     class=\"w-10 h-10 mr-3\"
-                                                                     onerror=\"this.src='/uploads/artists/placeholder.jpg'\">
-                                                                <div>
-                                                                    <div class=\"text-white font-medium\">\${song.title}</div>
-                                                                    <div>\${song.artist}</div>
-                                                                </div>
-                                                            </div>
-                                                        </td>
-                                                        <td class=\"hidden md:table-cell\">Album</td>
-                                                        <td class=\"hidden md:table-cell\">Đã thêm gần đây</td>
-                                                        <td class=\"text-right pr-4\">
-                                                            <button onclick=\"removeFromPlaylist('\${currentPlaylist.id}', '\${song.url}')\" 
-                                                                    class=\"text-gray-400 hover:text-white\">
-                                                                <i class=\"fas fa-trash-alt\"></i>
-                                                            </button>
-                                                        </td>
-                                                    `;
-                                                    songListContainer.appendChild(row);
-                                                });
-                                            }
-                                        }
-                                    } else {
-                                        window.location.href = '?page=home';
-                                    }
-                                }
-                            });
-                        </script>";
-                        
-                        $userPlaylist = true;
-                    } else {
-                        // Xử lý playlist có sẵn
-                        $playlistId = (int)$playlistId;
-                        if ($playlistId < 1 || $playlistId > count($playlists)) {
-                            // Chuyển hướng về trang chủ
-                            header("Location: ?page=home");
-                            exit();
-                        } else {
-                            $playlist = $playlists[$playlistId - 1];
-                        }
-                    }
-                    ?>
-                    
-                    <div class="flex flex-col md:flex-row items-center md:items-end gap-6 mb-6">
-                        <div>
-                            <div class="text-sm uppercase font-bold">Playlist</div>
-                            <h1 id="playlist-title" class="text-3xl md:text-5xl font-bold mt-2 mb-4">
-                                <?= $userPlaylist ? 'Đang tải...' : safeDisplay($playlist['name']) ?>
-                            </h1>
-                            <div id="playlist-description" class="text-gray-400 mb-2">
-                                <?= $userPlaylist ? '' : (isset($playlist['description']) ? safeDisplay($playlist['description']) : '') ?>
-                            </div>
-                            <div class="text-sm text-gray-300">
-                                <span class="font-semibold"><?= $userPlaylist ? 'Playlist của bạn' : 'Spotify' ?></span> • 
-                                <span id="playlist-count"><?= $userPlaylist ? '0' : $playlist['count'] ?></span> bài hát
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="bg-[#121212]/30 py-4">
-                        <div class="flex items-center gap-8 mb-6">
-                            <button class="w-14 h-14 rounded-full bg-spotify-green text-black flex items-center justify-center shadow-lg">
-                                <i class="fas fa-play text-2xl"></i>
-                            </button>
-                            <button class="text-3xl text-gray-400 hover:text-white">
-                                <i class="far fa-heart"></i>
-                            </button>
-                            <?php if ($userPlaylist): ?>
-                            <button onclick="deletePlaylist('<?= $playlistId ?>')" class="text-2xl text-gray-400 hover:text-white">
-                                <i class="fas fa-trash-alt"></i>
-                            </button>
-                            <?php endif; ?>
-                            <button class="text-2xl text-gray-400 hover:text-white">
-                                <i class="fas fa-ellipsis-h"></i>
-                            </button>
-                        </div>
-                        
-                        <div class="overflow-x-auto md:overflow-visible">
-                            <table class="w-full text-left text-sm text-gray-400">
-                                <thead class="border-b border-gray-700">
-                                    <tr>
-                                        <th class="pb-2 w-12">#</th>
-                                        <th class="pb-2">Title</th>
-                                        <th class="pb-2 hidden md:table-cell">Album</th>
-                                        <th class="pb-2 hidden md:table-cell">Date added</th>
-                                        <th class="pb-2 text-right pr-4">
-                                            <?php if ($userPlaylist): ?>
-                                                <i class="fas fa-trash text-gray-500"></i>
-                                            <?php else: ?>
-                                            <i class="far fa-clock"></i>
-                                            <?php endif; ?>
-                                        </th>
-                                    </tr>
-                                </thead>
-                                <tbody id="user-playlist-songs">
-                                    <?php if (!$userPlaylist): ?>
-                                    <?php foreach($songs as $index => $song): ?>
-                                    <tr class="hover:bg-white/10 group">
-                                        <td class="py-3 px-2">
-                                            <span class="group-hover:hidden"><?= $index + 1 ?></span>
-                                            <span class="hidden group-hover:inline">
-                                                <i class="fas fa-play text-white"></i>
-                                            </span>
-                                        </td>
-                                        <td>
-                                            <div class="flex items-center">
-                                                    <img src="<?= !empty($song['image']) ? htmlspecialchars($song['image']) : '/uploads/artists/placeholder.jpg' ?>" 
-                                                         alt="Ảnh bìa bài hát" 
-                                                         class="w-10 h-10 mr-3"
-                                                         onerror="this.src='/uploads/artists/placeholder.jpg'">
-                                                <div>
-                                                    <div class="text-white font-medium"><?= safeDisplay($song['title']) ?></div>
-                                                    <div><?= safeDisplay($song['artist']) ?></div>
-                                                </div>
-                                            </div>
-                                        </td>
-                                        <td class="hidden md:table-cell"><?= safeDisplay($song['album']) ?></td>
-                                        <td class="hidden md:table-cell">2 days ago</td>
-                                        <td class="text-right pr-4"><?= formatDuration($song['duration']) ?></td>
-                                    </tr>
-                                    <?php endforeach; ?>
-                                    <?php else: ?>
-                                        <tr>
-                                            <td colspan="5" class="py-8 text-center text-gray-400">Đang tải danh sách bài hát...</td>
-                                        </tr>
-                                    <?php endif; ?>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
+                    <?php elseif($page == 'playlist'): ?>
+    <?php 
+    // Kiểm tra xem có phải là playlist của người dùng không
+    $playlistId = isset($_GET['id']) ? $_GET['id'] : null;
+    if ($playlistId === null) {
+        // Nếu không có ID, chuyển về trang chủ
+        header("Location: ?page=home");
+        exit();
+    }
 
-                    <script>
-                    // Hàm xóa bài hát khỏi playlist
-                    function removeFromPlaylist(playlistId, songUrl) {
-                        const userPlaylists = JSON.parse(localStorage.getItem('userPlaylists') || '[]');
-                        const playlistIndex = userPlaylists.findIndex(p => p.id === playlistId);
-                        
-                        if (playlistIndex !== -1) {
-                            const playlist = userPlaylists[playlistIndex];
-                            const songIndex = playlist.songs.findIndex(s => s.url === songUrl);
-                            
-                            if (songIndex !== -1) {
-                                // Xóa bài hát
-                                playlist.songs.splice(songIndex, 1);
-                                localStorage.setItem('userPlaylists', JSON.stringify(userPlaylists));
-                                
-                                // Cập nhật lại giao diện
-                                const songCount = document.getElementById('playlist-count');
-                                if (songCount) {
-                                    songCount.textContent = playlist.songs.length;
-                                }
-                                
-                                // Hiển thị lại danh sách bài hát
-                                const songListContainer = document.getElementById('user-playlist-songs');
-                                if (songListContainer) {
-                                    if (playlist.songs.length === 0) {
-                                        songListContainer.innerHTML = '<tr><td colspan=\"5\" class=\"py-8 text-center text-gray-400\">Chưa có bài hát nào trong danh sách phát này</td></tr>';
-                                    } else {
-                                        // Tải lại danh sách
-                                        document.dispatchEvent(new Event('DOMContentLoaded'));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    </script>
-                <?php elseif($page == 'search'): ?>
-                    <div class="mb-6">
-                        <div class="relative">
-                            <label for="search-input" class="sr-only">Search</label>
-                            <input id="search-input" type="text" placeholder="What do you want to listen to?" class="w-full bg-white text-black py-3 px-12 rounded-full">
-                            <i class="fas fa-search absolute left-4 top-1/2 transform -translate-y-1/2 text-black"></i>
-                        </div>
-                    </div>
-                    
-                    <h2 class="text-2xl font-bold mb-4">Browse all</h2>
-                    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
-                        <?php 
-                        $categories = [
-                            ['name' => 'Podcasts', 'color' => 'from-blue-500 to-blue-800'],
-                            ['name' => 'Live Events', 'color' => 'from-purple-500 to-purple-800'],
-                            ['name' => 'Made For You', 'color' => 'from-green-500 to-green-800'],
-                            ['name' => 'New Releases', 'color' => 'from-pink-500 to-pink-800'],
-                            ['name' => 'Pop', 'color' => 'from-red-500 to-red-800'],
-                            ['name' => 'Hip-Hop', 'color' => 'from-yellow-500 to-yellow-800'],
-                            ['name' => 'Rock', 'color' => 'from-indigo-500 to-indigo-800'],
-                            ['name' => 'Latin', 'color' => 'from-orange-500 to-orange-800'],
-                            ['name' => 'Workout', 'color' => 'from-teal-500 to-teal-800'],
-                            ['name' => 'Electronic', 'color' => 'from-cyan-500 to-cyan-800'],
-                        ];
-                        
-                        foreach($categories as $category):
-                        ?>
-                        <div class="bg-gradient-to-br <?= $category['color'] ?> rounded-lg overflow-hidden h-48 relative">
-                            <div class="p-4 font-bold text-xl"><?= safeDisplay($category['name']) ?></div>
-                            <div class="absolute -bottom-2 -right-2 w-24 h-24 rotate-25 shadow-xl">
-                                <img src="/placeholder.svg?height=100&width=100" alt="Ảnh bìa thể loại" class="w-full h-full object-cover">
+    $userPlaylist = false;
+
+    // Fetch playlist từ cơ sở dữ liệu
+    $playlist = $playlistModel->getPlaylistById($playlistId);
+    
+    // Kiểm tra xem playlist có dữ liệu không
+    if (!$playlist) {
+        echo "<p>Playlist không tồn tại</p>";
+        exit();
+    } else {
+        $userPlaylist = true;
+    }
+
+    // Fetch danh sách bài hát của playlist từ cơ sở dữ liệu
+    $songs = $playlistModel->getSongsByPlaylistId($playlistId);
+    
+    // Kiểm tra xem bài hát có dữ liệu không
+    if (!$songs) {
+        echo "<p>Không có bài hát trong playlist này</p>";
+        exit();
+    }
+    ?>
+
+    <!-- Hiển thị thông tin playlist -->
+    <div class="flex flex-col md:flex-row items-center md:items-end gap-6 mb-6">
+        <div>
+            <div class="text-sm uppercase font-bold">Playlist</div>
+            <h1 id="playlist-title" class="text-3xl md:text-5xl font-bold mt-2 mb-4">
+                <?= safeDisplay($playlist['name']) ?>
+            </h1>
+            <div id="playlist-description" class="text-gray-400 mb-2">
+                <?= isset($playlist['description']) ? safeDisplay($playlist['description']) : '' ?>
+            </div>
+            <div class="text-sm text-gray-300">
+                <span class="font-semibold"><?= $userPlaylist ? 'Playlist của bạn' : 'Spotify' ?></span> • 
+                <span id="playlist-count"><?= count($songs) ?></span> bài hát
+            </div>
+        </div>
+    </div>
+
+    <div class="bg-[#121212]/30 py-4">
+        <div class="flex items-center gap-8 mb-6">
+            <button class="w-14 h-14 rounded-full bg-spotify-green text-black flex items-center justify-center shadow-lg" onclick="playPlaylist()">
+                <i class="fas fa-play text-2xl"></i>
+            </button>
+            <button class="text-3xl text-gray-400 hover:text-white">
+                <i class="far fa-heart"></i>
+            </button>
+            <?php if ($userPlaylist): ?>
+            <button onclick="deletePlaylist('<?= $playlistId ?>')" class="text-2xl text-gray-400 hover:text-white">
+                <i class="fas fa-trash-alt"></i>
+            </button>
+            <?php endif; ?>
+            <button class="text-2xl text-gray-400 hover:text-white">
+                <i class="fas fa-ellipsis-h"></i>
+            </button>
+        </div>
+        
+        <div class="overflow-x-auto md:overflow-visible">
+            <table class="w-full text-left text-sm text-gray-400">
+                <thead class="border-b border-gray-700">
+                    <tr>
+                        <th class="pb-2 w-12">#</th>
+                        <th class="pb-2">Title</th>
+                        <th class="pb-2 hidden md:table-cell">Album</th>
+                        <th class="pb-2 hidden md:table-cell">Date added</th>
+                        <th class="pb-2 text-right pr-4">
+                            <i class="fas fa-trash text-gray-500"></i>
+                        </th>
+                    </tr>
+                </thead>
+                <tbody id="user-playlist-songs">
+                    <?php foreach($songs as $index => $song): ?>
+                     <tr class="hover:bg-white/10 group cursor-pointer" 
+                        onclick="playSongAndUpdatePlays(
+                            '<?= htmlspecialchars($song['file_path']) ?>', 
+                            '<?= htmlspecialchars($song['title']) ?>', 
+                            '<?= htmlspecialchars($song['artist']) ?>', 
+                            '<?= !empty($song['cover_image']) ? '/uploads/songs/' . basename($song['cover_image']) : '/uploads/songs/placeholder.jpg' ?>',
+                            <?= $song['id'] ?>
+                        )">
+                        <td class="py-3 px-2">
+                            <span class="group-hover:hidden"><?= $index + 1 ?></span>
+                            <span class="hidden group-hover:inline">
+                                <i class="fas fa-play text-white"></i>
+                            </span>
+                        </td>
+                        <td>
+                            <div class="flex items-center">
+                                <img src="<?= !empty($song['cover_image']) ? '/uploads/songs/' . basename($song['cover_image']) : '/uploads/songs/placeholder.jpg' ?>" 
+                                     alt="<?= htmlspecialchars($song['title']) ?>" 
+                                     class="w-10 h-10 mr-3 object-cover"
+                                     onerror="this.src='/uploads/songs/placeholder.jpg'">
+                                <div>
+                                    <div class="text-white font-medium"><?= safeDisplay($song['title']) ?></div>
+                                    <div><?= safeDisplay($song['artist']) ?></div>
+                                </div>
                             </div>
-                        </div>
-                        <?php endforeach; ?>
-                    </div>
-                <?php elseif($page == 'library'): ?>
-                    <div class="flex items-center justify-between mb-6">
-                        <div class="flex items-center gap-4">
-                            <button class="bg-[#333333] hover:bg-[#444444] px-4 py-2 rounded-full">
-                                Playlists
-                            </button>
-                            <button class="bg-[#333333] hover:bg-[#444444] px-4 py-2 rounded-full">
-                                Artists
-                            </button>
-                            <button class="bg-[#333333] hover:bg-[#444444] px-4 py-2 rounded-full">
-                                Albums
-                            </button>
-                        </div>
-                        <button class="text-xl">
-                            <i class="fas fa-search"></i>
-                        </button>
-                    </div>
-                    
-                    <div class="flex items-center justify-between mb-4">
-                        <div class="flex items-center gap-2">
-                            <button class="text-xl">
-                                <i class="fas fa-sort"></i>
-                            </button>
-                            <span>Recents</span>
-                        </div>
-                        <button class="text-xl">
-                            <i class="fas fa-list"></i>
-                        </button>
-                    </div>
-                    
-                    <div class="grid gap-4">
-                        <!-- Đoạn mã hiển thị playlist đã bị xóa -->
-                    </div>
-                <?php endif; ?>
+                        </td>
+                        <td class="hidden md:table-cell"><?= safeDisplay($song['album']) ?></td>
+                        <td class="hidden md:table-cell">
+                            <?php
+                            $addedDate = new DateTime($song['added_at']);
+                            $now = new DateTime();
+                            $diff = $now->diff($addedDate);
+                            
+                            if ($diff->y > 0) {
+                                echo $diff->y . ' năm trước';
+                            } elseif ($diff->m > 0) {
+                                echo $diff->m . ' tháng trước';
+                            } elseif ($diff->d > 0) {
+                                echo $diff->d . ' ngày trước';
+                            } elseif ($diff->h > 0) {
+                                echo $diff->h . ' giờ trước';
+                            } elseif ($diff->i > 0) {
+                                echo $diff->i . ' phút trước';
+                            } else {
+                                echo 'Vừa xong';
+                            }
+                            ?>
+                        </td>
+                        <td class="text-right pr-4"><?= formatDuration($song['duration']) ?></td>
+                    </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+
+
+<?php elseif($page == 'search'): ?>
+    <div class="mb-6">
+        <div class="relative">
+            <label for="search-input" class="sr-only">Search</label>
+            <input id="search-input" type="text" placeholder="What do you want to listen to?" class="w-full bg-white text-black py-3 px-12 rounded-full">
+            <i class="fas fa-search absolute left-4 top-1/2 transform -translate-y-1/2 text-black"></i>
+        </div>
+    </div>
+    
+    <h2 class="text-2xl font-bold mb-4">Browse all</h2>
+    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+        <?php 
+        $categories = [
+            ['name' => 'Podcasts', 'color' => 'from-blue-500 to-blue-800'],
+            ['name' => 'Live Events', 'color' => 'from-purple-500 to-purple-800'],
+            ['name' => 'Made For You', 'color' => 'from-green-500 to-green-800'],
+            ['name' => 'New Releases', 'color' => 'from-pink-500 to-pink-800'],
+            ['name' => 'Pop', 'color' => 'from-red-500 to-red-800'],
+            ['name' => 'Hip-Hop', 'color' => 'from-yellow-500 to-yellow-800'],
+            ['name' => 'Rock', 'color' => 'from-indigo-500 to-indigo-800'],
+            ['name' => 'Latin', 'color' => 'from-orange-500 to-orange-800'],
+            ['name' => 'Workout', 'color' => 'from-teal-500 to-teal-800'],
+            ['name' => 'Electronic', 'color' => 'from-cyan-500 to-cyan-800'],
+        ];
+        
+        foreach($categories as $category):
+        ?>
+        <div class="bg-gradient-to-br <?= $category['color'] ?> rounded-lg overflow-hidden h-48 relative">
+            <div class="p-4 font-bold text-xl"><?= safeDisplay($category['name']) ?></div>
+            <div class="absolute -bottom-2 -right-2 w-24 h-24 rotate-25 shadow-xl">
+                <img src="/placeholder.svg?height=100&width=100" alt="Ảnh bìa thể loại" class="w-full h-full object-cover">
+            </div>
+        </div>
+        <?php endforeach; ?>
+    </div>
+<?php elseif($page == 'library'): ?>
+    <div class="flex items-center justify-between mb-6">
+        <div class="flex items-center gap-4">
+            <button class="bg-[#333333] hover:bg-[#444444] px-4 py-2 rounded-full">
+                Playlists
+            </button>
+            <button class="bg-[#333333] hover:bg-[#444444] px-4 py-2 rounded-full">
+                Artists
+            </button>
+            <button class="bg-[#333333] hover:bg-[#444444] px-4 py-2 rounded-full">
+                Albums
+            </button>
+        </div>
+        <button class="text-xl">
+            <i class="fas fa-search"></i>
+        </button>
+    </div>
+    
+    <div class="flex items-center justify-between mb-4">
+        <div class="flex items-center gap-2">
+            <button class="text-xl">
+                <i class="fas fa-sort"></i>
+            </button>
+            <span>Recents</span>
+        </div>
+        <button class="text-xl">
+            <i class="fas fa-list"></i>
+        </button>
+    </div>
+    
+    <div class="grid gap-4">
+        <!-- Đoạn mã hiển thị playlist đã bị xóa -->
+    </div>
+<?php endif; ?>
             </main>
         </div>
     </div>
@@ -2265,65 +2291,175 @@ function safeDisplay($data) {
 
     <!-- Modal tạo danh sách phát -->
     <div id="createPlaylistModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
-        <div class="bg-[#170f23] rounded-lg p-6 max-w-md w-full mx-4">
-            <div class="flex justify-between items-center mb-6">
-                <h3 class="text-2xl font-bold text-white">Tạo danh sách phát mới</h3>
-                <button onclick="closeCreatePlaylistModal()" class="text-gray-400 hover:text-white">
-                    <i class="fas fa-times text-xl"></i>
+    <div class="bg-[#170f23] rounded-lg p-6 max-w-md w-full mx-4">
+        <div class="flex justify-between items-center mb-6">
+            <h3 class="text-2xl font-bold text-white">Tạo danh sách phát mới</h3>
+            <button onclick="closeCreatePlaylistModal()" class="text-gray-400 hover:text-white">
+                <i class="fas fa-times text-xl"></i>
+            </button>
+        </div>
+        <form id="createPlaylistForm" method="POST">
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Tên danh sách phát</label>
+                    <input type="text" name="name" required 
+                           class="w-full p-2 bg-[#2f2739] text-white rounded focus:outline-none focus:border-[#1DB954]">
+                           <p id="playlistNameError" class="text-red-500 text-sm mt-1 hidden">Tên playlist đã tồn tại.</p>
+
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Mô tả</label>
+                    <textarea name="description" rows="3"
+                              class="w-full p-2 bg-[#2f2739] text-white rounded focus:outline-none focus:border-[#1DB954]"></textarea>
+                </div>
+            </div>
+            <div class="mt-6 flex justify-end space-x-3">
+                <button type="button" onclick="closeCreatePlaylistModal()"
+                        class="px-4 py-2 bg-[#2f2739] text-white rounded hover:bg-[#3f3749]">
+                    Hủy
+                </button>
+                <button type="submit" 
+                        class="px-4 py-2 bg-[#1DB954] text-white rounded hover:bg-[#1ed760]">
+                    Tạo
                 </button>
             </div>
-            <form id="createPlaylistForm" onsubmit="return createPlaylist(event)">
-                <div class="space-y-4">
-                    <div>
-                        <label class="block text-sm font-medium text-gray-300 mb-1">Tên danh sách phát</label>
-                        <input type="text" name="name" required 
-                               class="w-full p-2 bg-[#2f2739] text-white rounded focus:outline-none focus:border-[#1DB954]">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-300 mb-1">Mô tả</label>
-                        <textarea name="description" rows="3"
-                                  class="w-full p-2 bg-[#2f2739] text-white rounded focus:outline-none focus:border-[#1DB954]"></textarea>
-                </div>
-                </div>
-                <div class="mt-6 flex justify-end space-x-3">
-                    <button type="button" onclick="closeCreatePlaylistModal()"
-                            class="px-4 py-2 bg-[#2f2739] text-white rounded hover:bg-[#3f3749]">
-                        Hủy
-                    </button>
-                    <button type="submit" 
-                            class="px-4 py-2 bg-[#1DB954] text-white rounded hover:bg-[#1ed760]">
-                        Tạo
-                    </button>
-                </div>
-            </form>
-        </div>
+        </form>
     </div>
+</div>
+
+
 
     <!-- Modal thêm bài hát vào danh sách -->
-    <div id="addToPlaylistModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
-        <div class="bg-[#170f23] rounded-lg p-6 max-w-md w-full mx-4">
-            <div class="flex justify-between items-center mb-6">
-                <h3 class="text-2xl font-bold text-white">Thêm vào danh sách phát</h3>
-                <button onclick="closeAddToPlaylistModal()" class="text-gray-400 hover:text-white">
-                    <i class="fas fa-times text-xl"></i>
-                    </button>
-            </div>
-            <div id="playlistList" class="space-y-2 max-h-60 overflow-y-auto">
-                <!-- Danh sách playlist sẽ được thêm vào đây -->
-            </div>
-            <div class="mt-4">
-                <button onclick="openCreatePlaylistModal()" 
-                        class="w-full px-4 py-2 bg-[#1DB954] text-white rounded hover:bg-[#1ed760]">
-                    <i class="fas fa-plus mr-2"></i>Tạo danh sách phát mới
-                </button>
-            </div>
+    <div id="addToPlaylistModal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex items-center justify-center z-50">
+    <div class="bg-[#170f23] rounded-lg p-6 max-w-md w-full mx-4">
+        <div class="flex justify-between items-center mb-6">
+            <h3 class="text-2xl font-bold text-white">Thêm vào danh sách phát</h3>
+            <button onclick="closeAddToPlaylistModal()" class="text-gray-400 hover:text-white">
+                <i class="fas fa-times text-xl"></i>
+            </button>
         </div>
-                </div>
+
+        <!-- Display message here -->
+        <?php if (isset($_SESSION['message'])): ?>
+            <div class="mb-4 text-green-500">
+                <?= htmlspecialchars($_SESSION['message']) ?>
+            </div>
+            <?php unset($_SESSION['message']); ?>
+        <?php elseif (isset($_SESSION['error'])): ?>
+            <div class="mb-4 text-red-500">
+                <?= htmlspecialchars($_SESSION['error']) ?>
+            </div>
+            <?php unset($_SESSION['error']); ?>
+        <?php endif; ?>
+
+        <div id="playlistList" class="space-y-2 max-h-60 overflow-y-auto">
+            <?php if (empty($userPlaylists)): ?>
+                <p class="text-gray-400">Bạn chưa có playlist nào</p>
+            <?php else: ?>
+                <?php foreach ($userPlaylists as $playlist): ?>
+                    <form method="post" class="flex items-center justify-between p-2 hover:bg-[#2f2739] rounded">
+                        <div class="flex items-center">
+                            <div class="w-10 h-10 bg-[#2f2739] rounded mr-3 flex items-center justify-center">
+                                <i class="fas fa-music text-gray-400"></i>
+                            </div>
+                            <div>
+                                <h4 class="text-white"><?= htmlspecialchars($playlist['name']) ?></h4>
+                                <p class="text-sm text-gray-400"><?= $playlist['song_count'] ?? 0 ?> bài hát</p>
+                            </div>
+                        </div>
+                        <div>
+                            <input type="hidden" name="playlist_id" value="<?= $playlist['id'] ?>">
+                            <input type="hidden" name="song_id" class="modal-song-id" value=""> <!-- Sẽ được gán qua JS -->
+                            <button type="submit" class="text-gray-400 hover:text-white">
+                                <i class="fas fa-plus"></i>
+                            </button>
+                        </div>
+                    </form>
+                <?php endforeach; ?>
+            <?php endif; ?>
+        </div>
+
+        <div class="mt-4">
+            <button onclick="openCreatePlaylistModal()" 
+                    class="w-full px-4 py-2 bg-[#1DB954] text-white rounded hover:bg-[#1ed760]">
+                <i class="fas fa-plus mr-2"></i>Tạo danh sách phát mới
+            </button>
+        </div>
+    </div>
+</div>
+<div id="notification" class="fixed top-4 left-1/2 transform -translate-x-1/2 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg hidden">
+        <p id="notification-message"></p>
+    </div>
+    <script>
+        document.addEventListener("DOMContentLoaded", function () {
+            // Check if there is a session message
+            <?php if (isset($_SESSION['message'])): ?>
+                var message = <?= json_encode($_SESSION['message']); ?>;
+                var messageType = <?= json_encode($_SESSION['message_type']); ?>;
+                var notificationElement = document.getElementById('notification');
+                var messageElement = document.getElementById('notification-message');
+
+                // Set the message text and type
+                messageElement.innerText = message;
+                notificationElement.classList.remove('hidden');
+
+                // Set the background color based on the message type
+                if (messageType === 'success') {
+                    notificationElement.classList.add('bg-green-500');
+                    notificationElement.classList.remove('bg-red-500', 'bg-yellow-500');
+                } else if (messageType === 'error') {
+                    notificationElement.classList.add('bg-red-500');
+                    notificationElement.classList.remove('bg-green-500', 'bg-yellow-500');
+                } else if (messageType === 'info') {
+                    notificationElement.classList.add('bg-yellow-500');
+                    notificationElement.classList.remove('bg-green-500', 'bg-red-500');
+                }
+
+                // Hide the notification after 5 seconds
+                setTimeout(function () {
+                    notificationElement.classList.add('hidden');
+                    <?php unset($_SESSION['message'], $_SESSION['message_type']); ?> // Clear session message after it's displayed
+                }, 5000);
+            <?php endif; ?>
+        });
+    </script>
 
     <script>
-    // Quản lý playlist trong localStorage
-    let userPlaylists = JSON.parse(localStorage.getItem('userPlaylists') || '[]');
-    let currentSongToAdd = null;
+async function createPlaylist(event) {
+    event.preventDefault();
+    const form = document.getElementById('createPlaylistForm');
+    const formData = new FormData(form);
+
+    // Kiểm tra CSRF token có trong form hay không
+    const csrfToken = form.querySelector('input[name="csrf_token"]')?.value;
+    if (!csrfToken) {
+        alert('CSRF token không tìm thấy!');
+        return false;
+    }
+    
+    formData.append('csrf_token', csrfToken); // Thêm token vào formData
+
+    try {
+        const response = await fetch('/path-to-your-endpoint', {  // Cập nhật đúng URL
+            method: 'POST',
+            body: formData
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.message || 'Lỗi khi tạo playlist');
+        }
+
+        alert("Playlist đã được tạo thành công!");
+        location.reload();  // Reload trang sau khi tạo playlist thành công
+    } catch (error) {
+        alert('Đã có lỗi xảy ra: ' + error.message);
+    }
+
+    return false;
+}
+
+
 
     // Hàm kiểm tra bài hát đã tồn tại trong playlist
     function isSongInPlaylist(playlist, songUrl) {
@@ -2343,515 +2479,22 @@ function safeDisplay($data) {
     }
 
     // Hàm mở modal thêm vào playlist
-    function openAddToPlaylistModal(songData) {
-        if (!songData || !songData.url) {
-            alert('Không thể thêm bài hát này vào playlist');
-            return;
-        }
-
-        currentSongToAdd = songData;
-        const playlistList = document.getElementById('playlistList');
-        playlistList.innerHTML = '';
-
-        if (userPlaylists.length === 0) {
-            playlistList.innerHTML = '<p class="text-gray-400 text-center">Bạn chưa có danh sách phát nào</p>';
-        } else {
-            userPlaylists.forEach(playlist => {
-                const isSongExists = isSongInPlaylist(playlist, songData.url);
-                const playlistItem = document.createElement('div');
-                playlistItem.className = 'flex items-center justify-between p-2 hover:bg-[#2f2739] rounded cursor-pointer';
-                playlistItem.innerHTML = `
-                    <div class="flex items-center">
-                        <i class="fas fa-music text-gray-400 mr-3"></i>
-                        <span class="text-white">${playlist.name}</span>
-                        <span class="text-gray-500 text-sm ml-2">(${playlist.songs ? playlist.songs.length : 0} bài hát)</span>
-                    </div>
-                    <button onclick="addSongToPlaylist('${playlist.id}')" 
-                            class="text-[#1DB954] hover:text-[#1ed760] ${isSongExists ? 'opacity-50 cursor-not-allowed' : ''}"
-                            ${isSongExists ? 'disabled' : ''}>
-                        <i class="fas fa-plus"></i>
-                    </button>
-                `;
-                playlistList.appendChild(playlistItem);
-            });
-        }
-
-        document.getElementById('addToPlaylistModal').classList.remove('hidden');
-        document.getElementById('addToPlaylistModal').classList.add('flex');
-    }
-
-    // Hàm đóng modal thêm vào playlist
-    function closeAddToPlaylistModal() {
-        document.getElementById('addToPlaylistModal').classList.add('hidden');
-        document.getElementById('addToPlaylistModal').classList.remove('flex');
-    }
+    
 
     // Hàm tạo playlist mới
-    function createPlaylist(event) {
-        event.preventDefault();
-        const form = event.target;
-        const name = form.name.value.trim();
-        const description = form.description.value.trim();
-
-        if (!name) {
-            alert('Vui lòng nhập tên playlist');
-            return false;
-        }
-
-        // Kiểm tra tên playlist đã tồn tại chưa
-        const isNameExists = userPlaylists.some(p => p.name.toLowerCase() === name.toLowerCase());
-        if (isNameExists) {
-            alert('Tên playlist đã tồn tại');
-            return false;
-        }
-
-        const newPlaylist = {
-            id: Date.now().toString(),
-            name: name,
-            description: description,
-            songs: [],
-            created_at: new Date().toISOString()
-        };
-
-        userPlaylists.push(newPlaylist);
-        localStorage.setItem('userPlaylists', JSON.stringify(userPlaylists));
-
-        closeCreatePlaylistModal();
-        form.reset();
-
-        // Cập nhật giao diện
-        displayUserPlaylists();
-
-        // Chuyển đến playlist mới tạo
-        window.location.href = '?page=playlist&id=' + newPlaylist.id;
-
-        return false;
-    }
+   
 
     // Hàm thêm bài hát vào playlist
-    function addSongToPlaylist(playlistId) {
-        if (!currentSongToAdd || !currentSongToAdd.url) {
-            alert('Không thể thêm bài hát này vào playlist');
-            return;
-        }
-
-        const playlist = userPlaylists.find(p => p.id === playlistId);
-        if (!playlist) {
-            alert('Không tìm thấy playlist');
-            return;
-        }
-
-        // Kiểm tra xem bài hát đã tồn tại trong playlist chưa
-        if (isSongInPlaylist(playlist, currentSongToAdd.url)) {
-            alert('Bài hát đã có trong danh sách phát này');
-            return;
-        }
-
-        // Thêm bài hát vào playlist
-        if (!playlist.songs) {
-            playlist.songs = [];
-        }
-        playlist.songs.push(currentSongToAdd);
-        localStorage.setItem('userPlaylists', JSON.stringify(userPlaylists));
-
-        // Hiển thị thông báo thành công
-        const toast = document.createElement('div');
-        toast.className = 'fixed bottom-4 right-4 bg-[#1DB954] text-white px-4 py-2 rounded shadow-lg';
-        toast.textContent = 'Đã thêm bài hát vào danh sách phát';
-        document.body.appendChild(toast);
-        setTimeout(() => toast.remove(), 3000);
-
-        closeAddToPlaylistModal();
-    }
-
+   
     // Hàm xóa bài hát khỏi playlist
-    function removeFromPlaylist(playlistId, songUrl) {
-        if (!confirm('Bạn có chắc muốn xóa bài hát này khỏi playlist?')) {
-            return;
-        }
-
-        const playlist = userPlaylists.find(p => p.id === playlistId);
-        if (playlist && playlist.songs) {
-            playlist.songs = playlist.songs.filter(song => song.url !== songUrl);
-            localStorage.setItem('userPlaylists', JSON.stringify(userPlaylists));
-            
-            // Cập nhật giao diện
-            const songListContainer = document.getElementById('user-playlist-songs');
-            if (songListContainer) {
-                const songElement = songListContainer.querySelector(`[data-song-url="${songUrl}"]`);
-                if (songElement) {
-                    songElement.remove();
-                }
-            }
-        }
-    }
+    
 
     // Hàm xóa playlist
-    function deletePlaylist(playlistId) {
-        if (!confirm('Bạn có chắc muốn xóa danh sách phát này?')) {
-            return;
-        }
-
-        userPlaylists = userPlaylists.filter(p => p.id !== playlistId);
-        localStorage.setItem('userPlaylists', JSON.stringify(userPlaylists));
-        
-        // Chuyển về trang chủ
-        window.location.href = '?page=home';
-    }
-
+    
     // Hiển thị danh sách playlist của người dùng
-    function displayUserPlaylists() {
-        const container = document.getElementById('userPlaylists');
-        if (!container) return;
-
-        container.innerHTML = '';
-
-        if (userPlaylists.length === 0) {
-            container.innerHTML = '<p class="text-gray-400 text-sm">Bạn chưa có danh sách phát nào</p>';
-            return;
-        }
-
-        userPlaylists.forEach(playlist => {
-            const playlistItem = document.createElement('div');
-            playlistItem.className = 'flex items-center justify-between group';
-            playlistItem.innerHTML = `
-                <a href="?page=playlist&id=${playlist.id}" class="flex items-center flex-1 hover:text-white">
-                    <i class="fas fa-music text-gray-400 mr-3"></i>
-                    <div class="flex flex-col">
-                        <span class="text-gray-400 group-hover:text-white truncate">${playlist.name}</span>
-                        <span class="text-xs text-gray-500">${playlist.songs ? playlist.songs.length : 0} bài hát</span>
-                    </div>
-                </a>
-                <button onclick="deletePlaylist('${playlist.id}')" 
-                        class="text-gray-400 hover:text-white opacity-0 group-hover:opacity-100">
-                    <i class="fas fa-trash-alt"></i>
-                </button>
-            `;
-            container.appendChild(playlistItem);
-        });
-    }
-
-    // Hiển thị danh sách playlist khi trang load
-    document.addEventListener('DOMContentLoaded', displayUserPlaylists);
+   
+   
     </script>
-
-    <script>
-    // Khai báo biến lưu trữ lượt nghe
-    let songPlays = {};
-
-    // Lấy dữ liệu lượt nghe từ localStorage khi trang tải
-    document.addEventListener('DOMContentLoaded', function() {
-        // Đọc dữ liệu lượt nghe từ localStorage
-        const storedPlays = localStorage.getItem('songPlays');
-        if (storedPlays) {
-            songPlays = JSON.parse(storedPlays);
-            updateTopSongs();
-        }
-    });
-
-    // Hàm phát nhạc và cập nhật lượt nghe
-    function playSongAndUpdatePlays(url, title, artist, image, songId) {
-        // Gọi hàm phát nhạc hiện tại
-        playSong(url, title, artist, image);
-        
-        // Cập nhật lượt nghe
-        if (!songPlays[songId]) {
-            songPlays[songId] = {
-                id: songId,
-                title: title,
-                artist: artist,
-                cover_image: image,
-                file_path: url,
-                plays: 1
-            };
-        } else {
-            songPlays[songId].plays += 1;
-        }
-        
-        // Lưu vào localStorage
-        localStorage.setItem('songPlays', JSON.stringify(songPlays));
-        
-        // Cập nhật hiển thị top bài hát nghe nhiều
-        updateTopSongs();
-    }
-
-    // Hàm cập nhật hiển thị top bài hát nghe nhiều
-    function updateTopSongs() {
-        const container = document.getElementById('top-songs-container');
-        
-        // Chuyển đổi đối tượng songPlays thành mảng để sắp xếp
-        const songs = Object.values(songPlays);
-        
-        if (songs.length === 0) {
-            container.innerHTML = '<p class="text-gray-400">Chưa có dữ liệu bài hát nghe nhiều. Bắt đầu phát bài hát để xem thống kê.</p>';
-            return;
-        }
-        
-        // Sắp xếp bài hát theo lượt nghe giảm dần
-        songs.sort((a, b) => b.plays - a.plays);
-        
-        // Giới hạn chỉ hiển thị 5 bài hát
-        const topSongs = songs.slice(0, 5);
-        
-        // Tạo HTML cho danh sách top bài hát
-        let html = `
-        <table class="w-full text-left">
-            <thead>
-                <tr class="text-gray-400">
-                    <th class="pb-3">#</th>
-                    <th class="pb-3">Bài hát</th>
-                    <th class="pb-3">Nghệ sĩ</th>
-                    <th class="pb-3">Lượt nghe</th>
-                    <th class="pb-3"></th>
-                </tr>
-            </thead>
-            <tbody>
-        `;
-        
-        topSongs.forEach((song, index) => {
-            // Thêm icon đặc biệt cho top 1, 2, 3
-            let rankIcon = '';
-            let rankClass = '';
-            
-            if (index === 0) {
-                rankIcon = '<i class="fas fa-crown text-yellow-500"></i>';
-                rankClass = 'text-yellow-500 font-bold';
-            } else if (index === 1) {
-                rankIcon = '<i class="fas fa-medal text-gray-300"></i>';
-                rankClass = 'text-gray-300 font-bold';
-            } else if (index === 2) {
-                rankIcon = '<i class="fas fa-award text-yellow-600"></i>';
-                rankClass = 'text-yellow-600 font-bold';
-            }
-            
-            html += `
-            <tr class="hover:bg-[#2f2739] group">
-                <td class="py-2 px-2 relative">
-                    <div class="flex items-center">
-                        <span class="group-hover:hidden ${rankClass}">${rankIcon} ${index + 1}</span>
-                        <button type="button" 
-                                class="hidden group-hover:block text-white hover:scale-110 transition-transform absolute left-1/2 -translate-x-1/2"
-                                onclick="playSongAndUpdatePlays(
-                                    '${song.file_path}', 
-                                    '${song.title}', 
-                                    '${song.artist}', 
-                                    '${song.cover_image}',
-                                    ${song.id}
-                                )">
-                            <i class="fas fa-play text-lg"></i>
-                        </button>
-                </div>
-                </td>
-                <td class="py-2">
-                    <div class="flex items-center cursor-pointer" 
-                         onclick="playSongAndUpdatePlays(
-                            '${song.file_path}', 
-                            '${song.title}', 
-                            '${song.artist}', 
-                            '${song.cover_image}',
-                            ${song.id}
-                         )">
-                        <div class="relative w-10 h-10 mr-3 flex-shrink-0">
-                            <img src="${song.cover_image}" 
-                                 alt="${song.title}" 
-                                 class="w-full h-full rounded object-cover">
-            </div>
-                        <div class="flex flex-col">
-                            <div class="text-white text-sm font-medium">
-                                ${song.title}
-        </div>
-    </div>
-                    </div>
-                </td>
-                <td class="py-2 text-gray-400">${song.artist}</td>
-                <td class="py-2 text-gray-400">${song.plays}</td>
-                <td class="py-2">
-                    <button class="like-button text-gray-400 hover:text-white">
-                        <i class="far fa-heart"></i>
-                    </button>
-                </td>
-            </tr>
-            `;
-        });
-        
-        html += `
-            </tbody>
-        </table>
-        `;
-        
-        container.innerHTML = html;
-    }
-    </script>
-
-    <!-- Modal Hiển thị Lyrics -->
-    <div id="lyricsModal" class="fixed inset-0 bg-black bg-opacity-75 hidden z-50 items-center justify-center">
-        <div class="bg-[#231B2E] rounded-lg p-8 max-w-2xl w-full max-h-[80vh] overflow-y-auto">
-            <div class="flex justify-between items-center mb-6">
-                <div>
-                    <h3 id="lyrics-title" class="text-2xl font-bold text-white"></h3>
-                    <p id="lyrics-artist" class="text-gray-400"></p>
-                </div>
-                <button onclick="closeLyrics()" class="text-gray-400 hover:text-white">
-                    <i class="fas fa-times text-xl"></i>
-                </button>
-            </div>
-            <div id="lyrics-content" class="text-white whitespace-pre-line leading-relaxed"></div>
-        </div>
-    </div>
-
-    <script>
-    // Biến lưu ID bài hát đang phát
-    let currentSongId = null;
-    // Biến lưu đường dẫn lyrics của bài hát đang phát
-    let currentLyricsPath = null;
-
-    // Hàm phát nhạc và cập nhật lượt nghe
-    function playSongAndUpdatePlays(url, title, artist, image, songId, lyricsFile = null) {
-        // Gọi hàm phát nhạc hiện tại
-        playSong(url, title, artist, image);
-        
-        // Lưu ID bài hát đang phát
-        currentSongId = songId;
-        
-        // Lưu đường dẫn lyrics nếu có
-        currentLyricsPath = lyricsFile;
-        
-        // Cập nhật lượt nghe
-        if (!songPlays[songId]) {
-            songPlays[songId] = {
-                id: songId,
-                title: title,
-                artist: artist,
-                cover_image: image,
-                file_path: url,
-                lyrics_file: lyricsFile,
-                plays: 1
-            };
-        } else {
-            songPlays[songId].plays += 1;
-            // Đảm bảo cập nhật đường dẫn lyrics nếu có
-            if (lyricsFile && !songPlays[songId].lyrics_file) {
-                songPlays[songId].lyrics_file = lyricsFile;
-            }
-        }
-        
-        // Lưu vào localStorage
-        localStorage.setItem('songPlays', JSON.stringify(songPlays));
-        
-        // Cập nhật hiển thị top bài hát nghe nhiều
-        updateTopSongs();
-    }
-
-    // Hàm hiển thị lyrics
-    function showLyrics() {
-        // Lấy tên bài hát và nghệ sĩ hiện tại
-        const title = document.getElementById('player-title').textContent;
-        const artist = document.getElementById('player-artist').textContent;
-        
-        if (!title || title === 'Chọn một bài hát') {
-            alert('Không có bài hát đang phát');
-            return;
-        }
-        
-        // Hiển thị modal
-        const modal = document.getElementById('lyricsModal');
-        modal.classList.remove('hidden');
-        modal.classList.add('flex');
-        
-        // Hiển thị thông tin bài hát
-        document.getElementById('lyrics-title').textContent = title;
-        document.getElementById('lyrics-artist').textContent = artist;
-        
-        // Hiển thị nội dung lyrics
-        const lyricsContent = document.getElementById('lyrics-content');
-        
-        // Thử tìm lyrics từ localStorage trước
-        if (currentSongId && songPlays[currentSongId] && songPlays[currentSongId].lyrics) {
-            lyricsContent.textContent = songPlays[currentSongId].lyrics;
-            return;
-        }
-        
-        // Thử đoán tên file lyrics dựa vào tên bài hát
-        const songTitleFormatted = title.toLowerCase().replace(/\s+/g, '_').replace(/[^\w]/g, '_');
-        const possibleLyricsFiles = [
-            `uploads/lyrics/${songTitleFormatted}.txt`,
-            `uploads/lyrics/ch_ng_ta_c_a_hi_n_t_i.txt`, // Chúng ta của hiện tại
-            `uploads/lyrics/chay_ngay_di.txt`,
-            `uploads/lyrics/noi_nay_co_anh.txt`
-        ];
-        
-        // Hiển thị thông báo đang tải
-        lyricsContent.innerHTML = '<p class="text-center text-gray-400 my-8">Đang tải lời bài hát...</p>';
-        
-        // Thử tải lần lượt các file lyrics có thể
-        tryLoadLyrics(possibleLyricsFiles, 0, lyricsContent);
-    }
-
-    // Hàm thử tải lyrics từ danh sách các file có thể
-    function tryLoadLyrics(files, index, contentElement) {
-        if (index >= files.length) {
-            // Đã thử tất cả các file nhưng không có kết quả
-            contentElement.innerHTML = '<p class="text-center text-gray-400 my-8">Không tìm thấy lời bài hát</p>';
-            return;
-        }
-        
-        const xhr = new XMLHttpRequest();
-        xhr.open('GET', files[index], true);
-        xhr.onload = function() {
-            if (xhr.status === 200 && xhr.responseText.trim()) {
-                // Đã tìm thấy lyrics
-                contentElement.textContent = xhr.responseText;
-                
-                // Lưu vào cache nếu có currentSongId
-                if (currentSongId && songPlays[currentSongId]) {
-                    songPlays[currentSongId].lyrics = xhr.responseText;
-                    localStorage.setItem('songPlays', JSON.stringify(songPlays));
-                }
-        } else {
-                // Thử file tiếp theo
-                tryLoadLyrics(files, index + 1, contentElement);
-            }
-        };
-        xhr.onerror = function() {
-            // Thử file tiếp theo
-            tryLoadLyrics(files, index + 1, contentElement);
-        };
-        xhr.send();
-    }
-
-    // Hàm đóng lyrics
-    function closeLyrics() {
-        const modal = document.getElementById('lyricsModal');
-        modal.classList.add('hidden');
-        modal.classList.remove('flex');
-    }
-
-    // Đóng modal khi click bên ngoài
-    document.getElementById('lyricsModal').addEventListener('click', function(e) {
-        if (e.target === this) {
-            closeLyrics();
-        }
-    });
-    </script>
-
-    <!-- Modal Lyrics -->
-    <div id="lyricsModal" class="fixed inset-0 bg-black bg-opacity-50 hidden z-50 justify-center items-center">
-        <div class="bg-[#1A1A1A] rounded-lg p-4 max-w-md w-full max-h-[70vh] overflow-y-auto relative">
-            <div class="flex justify-between items-center mb-3">
-                <h3 class="text-lg font-semibold text-white" id="lyrics-title">Lời bài hát</h3>
-                <button onclick="closeLyrics()" class="text-gray-400 hover:text-white">
-                    <i class="fas fa-times"></i>
-                </button>
-            </div>
-            <div id="lyrics-content" class="text-gray-300 whitespace-pre-wrap text-sm leading-relaxed overflow-y-auto max-h-[50vh]"></div>
-            <div id="loading" class="hidden">
-                <div class="flex justify-center items-center py-3">
-                    <div class="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-[#1DB954]"></div>
-                </div>
-            </div>
-        </div>
-    </div>
-
     <script>
     // Biến toàn cục cho audio và lyrics
     let currentAudio = null;
@@ -2941,66 +2584,8 @@ function safeDisplay($data) {
         }
     }
 
-    // Hàm thử tải lyrics từ các đường dẫn có thể
-    function tryLoadLyrics(paths, index, container) {
-        if (index >= paths.length) {
-            container.innerHTML = '<div class="text-center text-gray-400 py-4">Không tìm thấy lời bài hát</div>';
-            return;
-        }
-
-        fetch(paths[index])
-            .then(response => {
-                if (!response.ok) throw new Error('Không tìm thấy file');
-                return response.text();
-            })
-            .then(lyrics => {
-                if (lyrics.trim()) {
-                    // Lưu vào cache nếu có ID bài hát
-                    if (currentSongData?.id) {
-                        localStorage.setItem(`lyrics_${currentSongData.id}`, lyrics);
-                    }
-                    displayLyrics(lyrics, container);
-                } else {
-                    throw new Error('File rỗng');
-                }
-            })
-            .catch(error => {
-                console.log(`Lỗi khi tải từ ${paths[index]}:`, error);
-                // Thử đường dẫn tiếp theo
-                tryLoadLyrics(paths, index + 1, container);
-            });
-    }
-
-    // Hàm hiển thị lyrics
-    function displayLyrics(lyrics, container) {
-        const lines = lyrics.split('\n').filter(line => line.trim());
-        container.innerHTML = lines.map(line => 
-            `<div class="lyrics-line mb-2">${line}</div>`
-        ).join('');
-    }
-
-    // Hàm cập nhật lượt nghe
-    function updatePlayCount(songId) {
-        if (!songId) return;
-
-        fetch('api/update-play-count.php', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ songId: songId })
-        }).catch(error => console.error('Lỗi cập nhật lượt nghe:', error));
-    }
-
-    // Thêm sự kiện đóng lyrics khi click nút close
-    document.addEventListener('DOMContentLoaded', function() {
-        const closeBtn = document.querySelector('#lyricsContainer .fa-times');
-        if (closeBtn) {
-            closeBtn.parentElement.addEventListener('click', () => {
-                document.getElementById('lyricsContainer').classList.add('hidden');
-            });
-        }   
-    });
+   
+    
     </script>
 
     <script>
@@ -3275,6 +2860,161 @@ function safeDisplay($data) {
         }
     });
     </script>
+
+<script>
+function openAddToPlaylistModal(songId) {
+    console.log("Gán song_id =", songId);
+    document.querySelectorAll('.modal-song-id').forEach(input => {
+        input.value = songId;
+    });
+    document.getElementById('addToPlaylistModal').classList.remove('hidden');
+}
+
+function closeAddToPlaylistModal() {
+    document.getElementById('addToPlaylistModal').classList.add('hidden');
+}
+</script>
+
+<script>
+// ... existing code ...
+
+// Hàm phát toàn bộ playlist
+function playPlaylist() {
+    const playlist = <?= json_encode($songs) ?>;
+    if (!playlist || playlist.length === 0) return;
+
+    // Lưu playlist vào localStorage để sử dụng ở các hàm khác
+    localStorage.setItem('currentPlaylist', JSON.stringify(playlist));
+    localStorage.setItem('currentPlaylistIndex', '0');
+
+    // Phát bài hát đầu tiên
+    const firstSong = playlist[0];
+    playSongAndUpdatePlays(
+        firstSong.file_path,
+        firstSong.title,
+        firstSong.artist,
+        firstSong.cover_image,
+        firstSong.id
+    );
+
+    // Cập nhật trạng thái nút play
+    const playButton = document.querySelector('.w-14.h-14.rounded-full.bg-spotify-green i');
+    if (playButton) {
+        playButton.className = 'fas fa-pause text-2xl';
+    }
+
+    // Thêm event listener cho việc kết thúc bài hát
+    const audioPlayer = document.getElementById('audioPlayer');
+    if (audioPlayer) {
+        audioPlayer.addEventListener('ended', function() {
+            playNextSongInPlaylist();
+        });
+    }
+}
+
+// Hàm phát bài tiếp theo trong playlist
+function playNextSongInPlaylist() {
+    const playlist = JSON.parse(localStorage.getItem('currentPlaylist') || '[]');
+    const currentIndex = parseInt(localStorage.getItem('currentPlaylistIndex') || '0');
+    
+    if (playlist.length === 0) return;
+    
+    // Tính toán index của bài tiếp theo
+    const nextIndex = (currentIndex + 1) % playlist.length;
+    const nextSong = playlist[nextIndex];
+    
+    // Phát bài tiếp theo
+    playSongAndUpdatePlays(
+        nextSong.file_path,
+        nextSong.title,
+        nextSong.artist,
+        nextSong.cover_image,
+        nextSong.id
+    );
+    
+    // Cập nhật index trong localStorage
+    localStorage.setItem('currentPlaylistIndex', nextIndex.toString());
+}
+
+// ... existing code ...
+</script>
+
+<script>
+// ... existing code ...
+
+function deletePlaylist(playlistId) {
+    if (confirm('Bạn có chắc muốn xóa playlist này?')) {
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.innerHTML = `
+            <input type="hidden" name="action" value="delete">
+            <input type="hidden" name="playlist_id" value="${playlistId}">
+        `;
+        document.body.appendChild(form);
+        form.submit();
+    }
+}
+</script>
+
+<script>
+// ... existing code ...
+
+function removeSongFromPlaylist(playlistId, songId) {
+    if (!confirm('Bạn có chắc chắn muốn xóa bài hát này khỏi playlist?')) {
+        return;
+    }
+
+    fetch(`/music_website/app/models/PlaylistModel.php?action=removeSong&playlistId=${playlistId}&songId=${songId}`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Xóa phần tử khỏi DOM
+            const songRow = document.querySelector(`tr[data-song-id="${songId}"]`);
+            if (songRow) {
+                songRow.remove();
+            }
+            
+            // Cập nhật số lượng bài hát
+            const songCount = document.getElementById('playlist-count');
+            if (songCount) {
+                const currentCount = parseInt(songCount.textContent);
+                songCount.textContent = currentCount - 1;
+            }
+
+            // Hiển thị thông báo thành công
+            showNotification('Đã xóa bài hát khỏi playlist', 'success');
+        } else {
+            showNotification(data.message || 'Có lỗi xảy ra khi xóa bài hát', 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showNotification('Có lỗi xảy ra khi xóa bài hát', 'error');
+    });
+}
+
+// Thêm hàm hiển thị thông báo
+function showNotification(message, type = 'success') {
+    const notification = document.createElement('div');
+    notification.className = `fixed top-4 right-4 p-4 rounded-lg ${
+        type === 'success' ? 'bg-green-500' : 'bg-red-500'
+    } text-white z-50`;
+    notification.textContent = message;
+    
+    document.body.appendChild(notification);
+    
+    setTimeout(() => {
+        notification.remove();
+    }, 3000);
+}
+
+// ... existing code ...
+</script>
+
 </body>
 </html>
-
